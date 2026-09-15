@@ -1,0 +1,6 @@
+{
+  "name": "Heat Origin",
+  "render_readme": true,
+  "filename": "heat-origin-card.js",
+  "homeassistant": "2024.8.0"
+}

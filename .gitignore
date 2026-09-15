@@ -1,0 +1,7 @@
+*.log
+Screens/
+cachesnpm/
+dist/
+node_modules/
+tools/*.html
+tools/*.png
