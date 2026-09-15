@@ -39,7 +39,7 @@ describe("configuration", () => {
     const off = editorData({ type: "t", entities: { mode: "sensor.x" }, sections: { day: false }, flow: { extras: [{ entity: "sensor.y" }] } });
     expect(off.sections?.day).toBe(false);
     expect(off.flow?.extras).toEqual([{ entity: "sensor.y" }]);
-    expect((off as Record<string, unknown>).modes).toBeUndefined();
+    expect(off.modes).toBeUndefined();
   });
 
   it("labels the flow sensor and the flow section apart", () => {
