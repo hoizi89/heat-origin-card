@@ -1,11 +1,12 @@
 import { LitElement, html, nothing, svg, type PropertyValues, type TemplateResult } from "lit";
 import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
 import { localize } from "./localize";
-import { circuitActive, classify, isRunning, wordLabel } from "./modes";
+import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
 import {
   buildDays,
   hourlyMeans,
+  lastRun,
   midnight,
   parseHistory,
   withLive,
@@ -13,7 +14,15 @@ import {
   type Segment,
   type StatePoint
 } from "./timeline";
-import type { HeatOriginCardConfig, HomeAssistant, ModeKind, ResolvedConfig, StoreKind } from "./types";
+import type {
+  ElectricSource,
+  HeatOriginCardConfig,
+  HomeAssistant,
+  ModeKind,
+  ResolvedConfig,
+  StoreConfig,
+  StoreKind
+} from "./types";
 import {
   clock,
   energyKwh,
@@ -32,6 +41,7 @@ import {
 const DAY = 86400000;
 const REFRESH = 5 * 60 * 1000;
 const W = 368;
+const NARROW = 340;
 
 const TONE: Record<ModeKind, string> = {
   heating: "var(--ho-heating)",
@@ -42,11 +52,38 @@ const TONE: Record<ModeKind, string> = {
   idle: "var(--ho-muted)"
 };
 
+const SOURCE_TONE: Record<ElectricSource, string> = {
+  solar: "var(--ho-sun)",
+  battery: "var(--ho-battery)",
+  grid: "var(--ho-grid)"
+};
+
+const STORE_TONE: Record<StoreKind, string> = {
+  hot_water: "var(--ho-hot-water)",
+  buffer: "var(--ho-heating)"
+};
+
+const ON = new Set(["on", "true", "running", "open", "1", "heat", "heating"]);
+
 interface Tip {
   x: number;
   y: number;
   text: TemplateResult;
 }
+
+interface Sink {
+  name: string;
+  value: string;
+  detail?: string;
+  right?: string;
+  active: boolean;
+  /** Heat is flowing to it from the heat pump right now. */
+  fed: boolean;
+  tone: string;
+  entity?: string;
+}
+
+type Shares = Partial<Record<ElectricSource, number>>;
 
 export class HeatOriginCard extends LitElement {
   static properties = {
@@ -54,20 +91,21 @@ export class HeatOriginCard extends LitElement {
     _config: { state: true },
     _points: { state: true },
     _pv: { state: true },
-    _tip: { state: true }
+    _tip: { state: true },
+    _narrow: { state: true }
   };
 
   static styles = cardStyles;
 
   hass?: HomeAssistant;
   private _config?: ResolvedConfig;
-  /** Operating-state history since yesterday's midnight. */
   private _points?: StatePoint[];
-  /** Hourly PV means in kW, keyed by the day's midnight. */
   private _pv: Record<number, Array<number | undefined>> = {};
   private _tip?: Tip;
+  private _narrow = false;
   private _fetchedAt = 0;
   private _fetching = false;
+  private _resize?: ResizeObserver;
 
   static getConfigElement() {
     return document.createElement(`${CARD_TYPE}-editor`);
@@ -84,11 +122,28 @@ export class HeatOriginCard extends LitElement {
   }
 
   getCardSize(): number {
-    return this._config?.shape === "compact" ? 2 : 8;
+    return this._config?.shape === "compact" ? 2 : 7;
   }
 
   getGridOptions() {
-    return { columns: 12, min_columns: 6 };
+    return { columns: 12, min_columns: 4 };
+  }
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (typeof ResizeObserver === "undefined") return;
+    // A narrow column needs a different layout for the flow, not just a smaller one.
+    this._resize = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      const narrow = width > 0 && width < NARROW;
+      if (narrow !== this._narrow) this._narrow = narrow;
+    });
+    this._resize.observe(this);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._resize?.disconnect();
   }
 
   protected updated(changed: PropertyValues): void {
@@ -99,7 +154,7 @@ export class HeatOriginCard extends LitElement {
 
   private _needsHistory(): boolean {
     const c = this._config;
-    return Boolean(this.hass && c && (c.shape === "compact" || c.sections.day));
+    return Boolean(this.hass && c && (c.shape === "compact" || c.sections.day || c.sections.flow));
   }
 
   private async _fetch(): Promise<void> {
@@ -125,7 +180,7 @@ export class HeatOriginCard extends LitElement {
     }
 
     const solar = config.entities.solar;
-    if (solar) {
+    if (solar && config.sections.day) {
       try {
         const stats = await hass.callWS({
           type: "recorder/statistics_during_period",
@@ -169,6 +224,15 @@ export class HeatOriginCard extends LitElement {
     return v === undefined ? undefined : formatTemp(v, this._locale);
   }
 
+  private _one(value: number): string {
+    return formatNumber(value, this._locale, 1);
+  }
+
+  private _isOn(id: string | undefined): boolean {
+    const state = stateOf(this.hass, id)?.state;
+    return state !== undefined && ON.has(state.toLowerCase());
+  }
+
   private _moreInfo(entityId: string | undefined) {
     if (!entityId) return;
     this.dispatchEvent(new CustomEvent("hass-more-info", { bubbles: true, composed: true, detail: { entityId } }));
@@ -198,8 +262,46 @@ export class HeatOriginCard extends LitElement {
         : heat !== undefined && electric !== undefined && electric > 0.05
           ? heat / electric
           : undefined;
+    return { heat, electric, cop };
+  }
+
+  /**
+   * Where the electricity comes from, split like the house's: the heat pump
+   * draws from the same meter. With a house sensor the shares follow the
+   * house; without one, PV at or above the draw counts as PV, the rest as grid.
+   */
+  private _shares(electric: number | undefined): Shares | undefined {
+    const config = this._config as ResolvedConfig;
+    const e = config.entities;
     const solar = powerKw(stateOf(this.hass, e.solar));
-    return { heat, electric, cop, solar };
+    const house = powerKw(stateOf(this.hass, e.house_power));
+    const gridRaw = powerKw(stateOf(this.hass, e.grid_power));
+    const batteryRaw = powerKw(stateOf(this.hass, e.battery_power));
+    const grid = gridRaw === undefined ? undefined : config.grid_invert ? -gridRaw : gridRaw;
+    const battery = batteryRaw === undefined ? undefined : config.battery_invert ? -batteryRaw : batteryRaw;
+
+    if (house !== undefined && house > 0.05) {
+      const fromSun = Math.min(Math.max(0, solar ?? 0), house);
+      const fromBattery = Math.max(0, battery ?? 0);
+      const fromGrid = Math.max(0, grid ?? house - fromSun - fromBattery);
+      const total = fromSun + fromBattery + fromGrid;
+      if (total <= 0) return undefined;
+      return { solar: fromSun / total, battery: fromBattery / total, grid: fromGrid / total };
+    }
+    if (solar !== undefined && electric !== undefined) return solar >= electric ? { solar: 1 } : { grid: 1 };
+    if (grid !== undefined) return grid > 0.05 ? { grid: 1 } : undefined;
+    return undefined;
+  }
+
+  private _dominant(shares: Shares | undefined): ElectricSource | undefined {
+    if (!shares) return undefined;
+    return (Object.entries(shares) as Array<[ElectricSource, number]>).sort((a, b) => b[1] - a[1])[0]?.[0];
+  }
+
+  private _sourceLabel(shares: Shares | undefined): string {
+    if (!shares) return this._t("flow.power");
+    const parts = (["solar", "battery", "grid"] as ElectricSource[]).filter((s) => (shares[s] ?? 0) >= 0.1);
+    return parts.map((s) => this._t(`source.${s}`)).join(" + ") || this._t("flow.power");
   }
 
   private _days(): DayTimeline[] | undefined {
@@ -208,6 +310,23 @@ export class HeatOriginCard extends LitElement {
     const mode = this._mode();
     const live = mode.raw !== undefined && mode.since !== undefined ? { state: mode.raw, at: mode.since } : undefined;
     return buildDays(withLive(this._points, live), config.modes, new Date(), config.day.days, config.day.short_run);
+  }
+
+  private _hm(minutes: number) {
+    const rounded = Math.round(minutes);
+    const value = `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+    return html`${value}<small>${this._t("day.hours")}</small>`;
+  }
+
+  private _spanText(minutes: number): string {
+    const s = formatSpan(minutes);
+    return [
+      s.hours !== undefined ? `${s.hours} ${this._t("unit.h")}` : "",
+      s.minutes !== undefined ? `${s.minutes} ${this._t("unit.min")}` : "",
+      s.seconds !== undefined ? `${s.seconds} ${this._t("unit.s")}` : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   // ─── render ────────────────────────────────────────────────
@@ -234,23 +353,19 @@ export class HeatOriginCard extends LitElement {
       <ha-card>
         ${this._renderHead()}
         ${config.sections.order.filter((s) => config.sections[s]).map((s) => blocks[s]())}
-        ${this._tip
-          ? html`<div class="tip" style="left:${this._tip.x}px;top:${this._tip.y}px">${this._tip.text}</div>`
-          : nothing}
+        ${this._tip ? html`<div class="tip" style="left:${this._tip.x}px;top:${this._tip.y}px">${this._tip.text}</div>` : nothing}
       </ha-card>
     `;
   }
 
   private _chip() {
     const mode = this._mode();
-    const live = this._live();
-    const onSun =
-      isRunning(mode.kind) && live.solar !== undefined && live.electric !== undefined && live.solar >= live.electric;
-    return html`<span
-      class="chip"
-      style="--tone:${TONE[mode.kind]}"
-      @click=${() => this._moreInfo(this._config?.entities.mode)}
-      ><i></i>${this._modeLabel(mode.kind, mode.raw)}${onSun ? ` · ${this._t("state.on_sun")}` : ""}</span
+    const since =
+      mode.since !== undefined && Date.now() - mode.since < DAY
+        ? ` · ${this._t("flow.since", { time: clock(new Date(mode.since), this._locale) })}`
+        : "";
+    return html`<span class="chip" style="--tone:${TONE[mode.kind]}" @click=${() => this._moreInfo(this._config?.entities.mode)}
+      ><i></i>${this._modeLabel(mode.kind, mode.raw)}${since}</span
     >`;
   }
 
@@ -264,6 +379,134 @@ export class HeatOriginCard extends LitElement {
 
   // ─── flow ──────────────────────────────────────────────────
 
+  private _sinks(): Sink[] {
+    const config = this._config as ResolvedConfig;
+    const locale = this._locale;
+    const mode = this._mode();
+    const running = isRunning(mode.kind);
+    const details = config.flow.circuit_details;
+    const sinks: Sink[] = [];
+
+    for (const store of config.stores) {
+      const top = this._temp(store.top);
+      const bottom = this._temp(store.bottom);
+      const fed = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
+      sinks.push({
+        name: store.name,
+        value: `${top ?? "–"} °C`,
+        detail: details && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
+        active: fed,
+        fed,
+        tone: STORE_TONE[store.kind],
+        entity: store.top
+      });
+    }
+
+    for (const circuit of config.circuits) {
+      const raw = stateOf(this.hass, circuit.state)?.state;
+      const pumpOn = circuit.pump ? this._isOn(circuit.pump) : undefined;
+      const active = pumpOn ?? circuitActive(raw, circuit.active);
+      const room = this._temp(circuit.room);
+      const flow = this._num(circuit.flow ?? circuit.temperature);
+      const ret = this._num(circuit.return);
+      const max = room !== undefined ? 9 : 16;
+      const word = circuit.state
+        ? shortWordLabel(raw, locale, max)
+        : pumpOn !== undefined
+          ? this._t(pumpOn ? "flow.running" : "kind.idle")
+          : undefined;
+
+      let value: string;
+      if (circuit.kind === "circulation") {
+        value = flow !== undefined ? `${formatTemp(flow, locale)} °C${active ? ` · ${this._t("flow.running")}` : ""}` : word ?? "–";
+      } else {
+        const flowText = flow !== undefined ? `${this._t("flow.vl")} ${formatTemp(flow, locale)} °C` : undefined;
+        value = active ? flowText ?? word ?? "–" : word ?? flowText ?? "–";
+      }
+      const cooling = raw ? /cool|kühl|cc-/i.test(raw) : false;
+      const spread =
+        details && flow !== undefined && ret !== undefined
+          ? `${formatTemp(flow, locale)}/${formatTemp(ret, locale)} · Δ ${this._one(flow - ret)} K`
+          : undefined;
+      sinks.push({
+        name: circuit.name,
+        value,
+        detail: spread,
+        right: room !== undefined ? `${room}°` : undefined,
+        active,
+        fed: running && active && circuit.kind === "heating",
+        tone: circuit.kind === "circulation" ? TONE.hot_water : cooling ? TONE.cooling : TONE.heating,
+        entity: circuit.pump ?? circuit.state ?? circuit.flow ?? circuit.temperature
+      });
+    }
+    return sinks;
+  }
+
+  private _flowFoot(running: boolean): TemplateResult[] {
+    const config = this._config as ResolvedConfig;
+    const locale = this._locale;
+    const foot: TemplateResult[] = [];
+    if (running && config.flow.spread) {
+      const flowT = this._num(config.entities.flow);
+      const retT = this._num(config.entities.return);
+      const volume = this._num(config.entities.volume_flow);
+      if (flowT !== undefined) foot.push(html`<span>${this._t("flow.flow")} <b>${formatTemp(flowT, locale)} °C</b></span>`);
+      if (retT !== undefined) foot.push(html`<span>${this._t("flow.return")} <b>${formatTemp(retT, locale)} °C</b></span>`);
+      if (flowT !== undefined && retT !== undefined) foot.push(html`<span>${this._t("flow.spread")} <b>${this._one(flowT - retT)} K</b></span>`);
+      if (volume !== undefined)
+        foot.push(html`<span><b>${formatNumber(volume, locale, 0)}</b> ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}</span>`);
+    }
+    if (!running) {
+      const today = this._days()?.at(-1);
+      if (today) {
+        foot.push(html`<span>${this._t("flow.today_starts")} <b>${this._t("flow.starts_n", { n: String(today.starts) })}</b></span>`);
+        const last = lastRun(today);
+        if (last)
+          foot.push(
+            html`<span>${this._t("flow.last")} ${this._t(`kind.${last.kind}`)} <b>${clock(new Date(last.from), locale)}–${clock(new Date(last.to), locale)}</b></span>`
+          );
+      }
+    }
+    for (const extra of config.flow.extras) {
+      const entity = stateOf(this.hass, extra.entity);
+      if (!entity) continue;
+      const n = numberOf(entity);
+      const value = n === undefined ? entity.state : formatNumber(n, locale, Math.abs(n) < 100 ? 1 : 0);
+      const name = extra.name ?? String(entity.attributes.friendly_name ?? extra.entity);
+      foot.push(html`<span>${name} <b>${value}${unitOf(entity) ? ` ${unitOf(entity)}` : ""}</b></span>`);
+    }
+    return foot;
+  }
+
+  private _footBlock(running: boolean) {
+    const foot = this._flowFoot(running);
+    return foot.length ? html`<div class="foot">${foot}</div>` : nothing;
+  }
+
+  /** The ring around the heat pump: ambient heat, then each source of the electricity. */
+  private _ring(cx: number, cy: number, r: number, heat: number, electric: number, shares: Shares | undefined) {
+    if (heat <= 0) return nothing;
+    const c = 2 * Math.PI * r;
+    const air = Math.max(0, heat - electric) / heat;
+    const parts: Array<[string, number]> = [["var(--ho-air)", air]];
+    const rest = 1 - air;
+    if (shares) {
+      for (const s of ["solar", "battery", "grid"] as ElectricSource[]) {
+        if ((shares[s] ?? 0) > 0) parts.push([SOURCE_TONE[s], rest * (shares[s] ?? 0)]);
+      }
+    } else parts.push(["var(--ho-power)", rest]);
+    let offset = 0;
+    return parts
+      .filter(([, share]) => share > 0.005)
+      .map(([tone, share]) => {
+        const len = Math.max(0, c * share - 2);
+        const arc = svg`<circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${tone} stroke-width="4.5"
+          stroke-dasharray="${len} ${c - len}" stroke-dashoffset=${-offset} transform="rotate(-90 ${cx} ${cy})"/>`;
+        offset += c * share;
+        return arc;
+      });
+  }
+
   private _renderFlow() {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
@@ -273,154 +516,143 @@ export class HeatOriginCard extends LitElement {
     const heat = running ? live.heat ?? 0 : 0;
     const electric = running ? live.electric ?? 0 : 0;
     const air = Math.max(0, heat - electric);
+    const shares = running ? this._shares(live.electric) : undefined;
+    const dominant = this._dominant(shares);
+    const powerTone = running ? (dominant ? SOURCE_TONE[dominant] : "var(--ho-power)") : "var(--ho-muted)";
+    const sinks = this._sinks();
+    const outdoor = this._temp(config.entities.outdoor);
+    const width = (kw: number) => Math.min(9, Math.max(2.5, 2 + kw * 1.1));
+    const hasBoth = Boolean(config.entities.heat_power && config.entities.electric_power);
+    const last = running ? undefined : lastRun(this._days()?.at(-1));
+    const airTone = running ? "var(--ho-air)" : "var(--ho-muted)";
+    const lineStyle = running ? "" : "3 5";
+
+    const centre = (cx: number, cy: number, r: number, big: number) =>
+      running
+        ? svg`
+          <text x=${cx} y=${cy} text-anchor="middle" font-size=${big} font-weight="700" fill="var(--ho-ink)">${formatNumber(heat, locale, 1)}</text>
+          <text x=${cx} y=${cy + 13} text-anchor="middle" font-size="9" fill="var(--ho-muted)" class="mono">${this._t("flow.heat")}</text>
+          ${live.cop !== undefined
+            ? svg`<text x=${cx} y=${cy + r - 11} text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ho-ink)" class="mono">COP ${formatNumber(live.cop, locale, 1)}</text>`
+            : nothing}`
+        : last
+          ? svg`
+            <text x=${cx} y=${cy - 14} text-anchor="middle" font-size="9" fill="var(--ho-muted)" class="mono">${this._t("flow.last")}</text>
+            <text x=${cx} y=${cy + 5} text-anchor="middle" font-size=${big - 7} font-weight="700" fill="var(--ho-ink)">${this._spanText((last.to - last.from) / 60000)}</text>
+            <text x=${cx} y=${cy + 20} text-anchor="middle" font-size="10" font-weight="600" fill=${TONE[last.kind]}>${this._t(`kind.${last.kind}`)}</text>`
+          : svg`<text x=${cx} y=${cy + 4} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ho-muted)">${this._modeLabel(mode.kind, mode.raw)}</text>`;
+
+    const powerGlyph = (x: number, y: number) =>
+      svg`<path d="M${x + 2} ${y - 10} L${x - 6} ${y + 2} H${x} L${x - 2} ${y + 10} L${x + 6} ${y - 2} H${x} Z" fill=${powerTone}/>`;
+    const airGlyph = (x: number, y: number) =>
+      svg`<path d="M${x - 10} ${y - 5} H${x + 5} a3.5 3.5 0 1 0 -3.5 -3.5 M${x - 10} ${y} H${x + 9} M${x - 10} ${y + 5} H${x + 3} a3.5 3.5 0 1 1 -3.5 3.5"
+        fill="none" stroke=${airTone} stroke-width="2" stroke-linecap="round"/>`;
+
+    if (this._narrow) {
+      const cx = 124;
+      const cy = 46;
+      const r = 38;
+      return html`
+        <div class="section">
+          <svg viewBox="0 0 248 112" role="img" aria-label="${this._modeLabel(mode.kind, mode.raw)}">
+            ${config.entities.electric_power
+              ? svg`<path d="M42 ${cy} H${cx - r}" stroke=${running ? powerTone : "var(--ho-track)"} stroke-width=${running ? width(electric) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
+                <g class="clickable" @click=${() => this._moreInfo(config.entities.electric_power)}>
+                  <circle cx="24" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? powerTone : "var(--ho-hairline)"} stroke-width="2"/>
+                  ${powerGlyph(24, cy)}
+                  <text x="24" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(electric, locale) : "–"}</text>
+                  <text x="24" y=${cy + 45} text-anchor="middle" font-size="9.5" fill="var(--ho-muted)">${running ? this._sourceLabel(shares) : this._t("flow.power")}</text>
+                </g>`
+              : nothing}
+            ${hasBoth
+              ? svg`<path d="M${cx + r} ${cy} H206" stroke=${running ? "var(--ho-air)" : "var(--ho-track)"} stroke-width=${running ? width(air) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
+                <g class="clickable" @click=${() => this._moreInfo(config.entities.outdoor ?? config.entities.heat_power)}>
+                  <circle cx="224" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
+                  ${airGlyph(224, cy)}
+                  <text x="224" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(air, locale) : outdoor !== undefined ? `${outdoor}°` : "–"}</text>
+                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="9.5" fill="var(--ho-muted)">${running ? this._t("flow.air") : this._t("flow.outside")}</text>
+                </g>`
+              : nothing}
+            <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
+              <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
+              ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
+              ${centre(cx, cy, r, 24)}
+            </g>
+          </svg>
+          ${sinks.length
+            ? html`<div class="sinks">
+                ${sinks.map(
+                  (s) => html`<div class="sink ${s.active ? "active" : ""}" style="--tone:${s.tone}" @click=${() => this._moreInfo(s.entity)}>
+                    <span>${s.name}</span><span class="v">${s.value}${s.right ? ` · ${s.right}` : ""}</span>
+                  </div>`
+                )}
+              </div>`
+            : nothing}
+          ${this._footBlock(running)}
+        </div>
+      `;
+    }
+
     const details = config.flow.circuit_details;
-
-    type Sink = {
-      name: string;
-      line2: string;
-      line3?: string;
-      right?: string;
-      active: boolean;
-      tone: string;
-      entity?: string;
-    };
-
-    const sinks: Sink[] = [];
-    for (const store of config.stores) {
-      const top = this._temp(store.top);
-      const bottom = this._temp(store.bottom);
-      const active = (store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating");
-      sinks.push({
-        name: store.name,
-        line2: `${top ?? "–"} °C${active ? ` · ${this._t("flow.charging")}` : ""}`,
-        line3: details && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
-        active,
-        tone: store.kind === "hot_water" ? TONE.hot_water : TONE.heating,
-        entity: store.top
-      });
-    }
-    for (const circuit of config.circuits) {
-      const raw = stateOf(this.hass, circuit.state)?.state;
-      const active = circuitActive(raw, circuit.active);
-      const flow = this._num(circuit.flow);
-      const ret = this._num(circuit.return);
-      const room = this._temp(circuit.room);
-      const cooling = raw ? /cool|kühl/i.test(raw) : false;
-      const word = circuit.state ? wordLabel(raw, locale) : undefined;
-      const flowText = flow !== undefined ? `${this._t("flow.vl")} ${formatTemp(flow, locale)} °C` : undefined;
-      const line2 = active ? flowText ?? word ?? "–" : word ?? flowText ?? "–";
-      const spread =
-        flow !== undefined && ret !== undefined
-          ? `${formatTemp(flow, locale)}/${formatTemp(ret, locale)} · Δ ${formatNumber(flow - ret, locale, 1)} K`
-          : undefined;
-      sinks.push({
-        name: circuit.name,
-        line2,
-        line3: details ? spread : undefined,
-        right: room !== undefined ? `${room} °C` : undefined,
-        active,
-        tone: cooling ? TONE.cooling : TONE.heating,
-        entity: circuit.state ?? circuit.flow
-      });
-    }
-
-    const rowH = details ? 50 : 40;
-    const gap = 9;
+    const rowH = details ? 46 : 36;
+    const gap = 8;
     const stack = sinks.length ? sinks.length * rowH + (sinks.length - 1) * gap : 0;
-    const H = Math.max(222, stack + 12);
+    const H = Math.max(200, stack + 8);
     const cy = H / 2;
     const cx = 150;
-    const r = 40;
-    const sinkX = 236;
+    const r = 38;
+    const sinkX = 238;
     const sinkW = W - sinkX;
     const y0 = cy - stack / 2;
-    const width = (kw: number) => Math.min(10, Math.max(2, 1.6 + kw * 1.2));
+    const powerY = cy - 54;
+    const airY = cy + 54;
 
     const inputs: TemplateResult[] = [];
-    const powerY = cy - 58;
-    const airY = cy + 58;
     if (config.entities.electric_power) {
       inputs.push(svg`
-        <path d="M56 ${powerY} C 96 ${powerY}, 92 ${cy - 10}, ${cx - r + 2} ${cy - 10}" fill="none"
-          stroke=${running ? "var(--ho-power)" : "var(--ho-track)"} stroke-width=${running ? width(electric) : 2} stroke-linecap="round"/>
+        <path d="M54 ${powerY} C 94 ${powerY}, 92 ${cy - 10}, ${cx - r + 2} ${cy - 10}" fill="none"
+          stroke=${running ? powerTone : "var(--ho-track)"} stroke-width=${running ? width(electric) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
         <g class="clickable" @click=${() => this._moreInfo(config.entities.electric_power)}>
-          <circle cx="36" cy=${powerY} r="20" fill="var(--ho-surface)" stroke="var(--ho-power)" stroke-width="2"/>
-          <path d="M38 ${powerY - 11} L29 ${powerY + 2} H36 L34 ${powerY + 11} L43 ${powerY - 2} H36 Z" fill="var(--ho-power)"/>
-          <text x="36" y=${powerY + 36} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ho-ink)" class="mono">${formatPower(live.electric ?? 0, locale)} kW</text>
-          <text x="36" y=${powerY + 49} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${this._t("flow.power")}</text>
-        </g>
-        ${live.solar !== undefined && live.electric !== undefined && running && live.solar >= live.electric
-          ? svg`<circle cx="52" cy=${powerY - 16} r="7" fill="var(--ho-sun)"/><text x="52" y=${powerY - 12.5} text-anchor="middle" font-size="7.5" font-weight="700" fill="#1a1e2b">PV</text>`
-          : nothing}
-      `);
+          <circle cx="36" cy=${powerY} r="18" fill="var(--ho-surface)" stroke=${running ? powerTone : "var(--ho-hairline)"} stroke-width="2"/>
+          ${powerGlyph(36, powerY)}
+          ${running
+            ? svg`<text x="36" y=${powerY + 33} text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ho-ink)" class="mono">${formatPower(electric, locale)} kW</text>`
+            : nothing}
+          <text x="36" y=${powerY + (running ? 46 : 33)} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t("flow.power")} · ${this._sourceLabel(shares)}` : this._t("flow.power")}</text>
+        </g>`);
     }
-    if (config.entities.heat_power && config.entities.electric_power) {
-      const outdoor = this._temp(config.entities.outdoor);
+    if (hasBoth) {
       inputs.push(svg`
-        <path d="M56 ${airY} C 96 ${airY}, 92 ${cy + 10}, ${cx - r + 2} ${cy + 10}" fill="none"
-          stroke=${running ? "var(--ho-air)" : "var(--ho-track)"} stroke-width=${running ? width(air) : 2} stroke-linecap="round"/>
+        <path d="M54 ${airY} C 94 ${airY}, 92 ${cy + 10}, ${cx - r + 2} ${cy + 10}" fill="none"
+          stroke=${running ? "var(--ho-air)" : "var(--ho-track)"} stroke-width=${running ? width(air) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
         <g class="clickable" @click=${() => this._moreInfo(config.entities.outdoor ?? config.entities.heat_power)}>
-          <circle cx="36" cy=${airY} r="20" fill="var(--ho-surface)" stroke="var(--ho-air)" stroke-width="2"/>
-          <path d="M25 ${airY - 5} H41 a3.5 3.5 0 1 0 -3.5 -3.5 M25 ${airY} H45 M25 ${airY + 5} H39 a3.5 3.5 0 1 1 -3.5 3.5"
-            fill="none" stroke="var(--ho-air)" stroke-width="2" stroke-linecap="round"/>
-          <text x="36" y=${airY + 36} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ho-ink)" class="mono">${formatPower(air, locale)} kW</text>
-          <text x="36" y=${airY + 49} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${this._t("flow.air")}${outdoor !== undefined ? ` ${outdoor} °C` : ""}</text>
-        </g>
-      `);
+          <circle cx="36" cy=${airY} r="18" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
+          ${airGlyph(36, airY)}
+          <text x="36" y=${airY + 33} text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? `${formatPower(air, locale)} kW` : outdoor !== undefined ? `${outdoor} °C` : ""}</text>
+          <text x="36" y=${airY + 46} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t("flow.air")}${outdoor !== undefined ? ` ${outdoor} °C` : ""}` : this._t("flow.outside")}</text>
+        </g>`);
     }
-
-    // The ring around the heat pump: the share that came from the air.
-    const circumference = 2 * Math.PI * r;
-    const airShare = heat > 0 ? air / heat : 0;
-    const airLen = Math.max(0, circumference * airShare - 2);
-    const powerLen = Math.max(0, circumference * (1 - airShare) - 2);
 
     const sinkNodes = sinks.map((sink, i) => {
       const y = y0 + i * (rowH + gap);
       const mid = y + rowH / 2;
-      const path = `M${cx + r} ${cy} C ${cx + r + 26} ${cy}, ${sinkX - 26} ${mid}, ${sinkX} ${mid}`;
+      const path = `M${cx + r} ${cy} C ${cx + r + 24} ${cy}, ${sinkX - 24} ${mid}, ${sinkX} ${mid}`;
       return svg`
-        ${sink.active
-          ? svg`<path d=${path} fill="none" stroke=${sink.tone} stroke-width=${width(heat)} stroke-linecap="round" opacity="0.3"/>
-               <path d=${path} fill="none" stroke=${sink.tone} stroke-width="2.5" stroke-linecap="round" class="flow-dash"/>`
-          : svg`<path d=${path} fill="none" stroke="var(--ho-track)" stroke-width="2"/>`}
+        ${sink.fed
+          ? svg`<path d=${path} fill="none" stroke=${sink.tone} stroke-width=${width(heat)} stroke-linecap="round"/>
+               <path d=${path} fill="none" stroke="#fff" stroke-width="3" opacity="0.85" class="flow-dash"/>`
+          : svg`<path d=${path} fill="none" stroke=${sink.active ? sink.tone : "var(--ho-track)"} stroke-width="2" opacity=${sink.active ? 0.6 : 1}/>`}
         <g class="clickable" @click=${() => this._moreInfo(sink.entity)}>
-          <rect x=${sinkX} y=${y} width=${sinkW} height=${rowH} rx="9"
-            fill=${sink.active ? `color-mix(in srgb, ${sink.tone} 14%, var(--ho-surface))` : "var(--ho-surface)"}
+          <rect x=${sinkX} y=${y} width=${sinkW} height=${rowH} rx="8"
+            fill=${sink.active ? `color-mix(in srgb, ${sink.tone} 16%, var(--ho-surface))` : "var(--ho-surface)"}
             stroke=${sink.active ? sink.tone : "var(--ho-hairline)"} stroke-width="1.5"/>
-          <text x=${sinkX + 10} y=${y + 16} font-size="11" font-weight="600" fill="var(--ho-ink)">${sink.name}</text>
-          ${sink.right
-            ? svg`<text x=${W - 8} y=${y + 30} text-anchor="end" font-size="10" fill="var(--ho-muted)" class="mono">${sink.right}</text>`
-            : nothing}
-          <text x=${sinkX + 10} y=${y + 30} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.line2}</text>
-          ${sink.line3
-            ? svg`<text x=${sinkX + 10} y=${y + 43} font-size="9.5" fill="var(--ho-muted)" class="mono">${sink.line3}</text>`
-            : nothing}
+          <text x=${sinkX + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${sink.name}</text>
+          <text x=${sinkX + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
+          ${sink.right ? svg`<text x=${W - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
+          ${sink.detail ? svg`<text x=${sinkX + 9} y=${y + 41} font-size="9.5" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
         </g>
       `;
     });
-
-    const flowT = this._num(config.entities.flow);
-    const retT = this._num(config.entities.return);
-    const volume = this._num(config.entities.volume_flow);
-    const outdoorOnly = !(config.entities.heat_power && config.entities.electric_power) ? this._temp(config.entities.outdoor) : undefined;
-    const foot: TemplateResult[] = [];
-    if (config.flow.spread) {
-      if (flowT !== undefined) foot.push(html`<span>${this._t("flow.flow")} <b>${formatTemp(flowT, locale)} °C</b></span>`);
-      if (retT !== undefined) foot.push(html`<span>${this._t("flow.return")} <b>${formatTemp(retT, locale)} °C</b></span>`);
-      if (flowT !== undefined && retT !== undefined)
-        foot.push(html`<span>${this._t("flow.spread")} <b>${formatNumber(flowT - retT, locale, 1)} K</b></span>`);
-      if (volume !== undefined) foot.push(html`<span><b>${formatNumber(volume, locale, 0)}</b> ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}</span>`);
-    }
-    if (outdoorOnly !== undefined) foot.push(html`<span>${this._t("flow.outdoor")} <b>${outdoorOnly} °C</b></span>`);
-    for (const extra of config.flow.extras) {
-      const entity = stateOf(this.hass, extra.entity);
-      if (!entity) continue;
-      const n = numberOf(entity);
-      const value = n === undefined ? entity.state : formatNumber(n, locale, Math.abs(n) < 100 ? 1 : 0);
-      const name = extra.name ?? String(entity.attributes.friendly_name ?? extra.entity);
-      foot.push(html`<span>${name} <b>${value}${unitOf(entity) ? ` ${unitOf(entity)}` : ""}</b></span>`);
-    }
 
     return html`
       <div class="section">
@@ -429,21 +661,11 @@ export class HeatOriginCard extends LitElement {
           ${sinkNodes}
           <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
             <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
-            ${heat > 0 && config.entities.electric_power
-              ? svg`<circle cx=${cx} cy=${cy} r=${r} fill="none" stroke="var(--ho-air)" stroke-width="4"
-                    stroke-dasharray="${airLen} ${circumference - airLen}" transform="rotate(-90 ${cx} ${cy})"/>
-                  <circle cx=${cx} cy=${cy} r=${r} fill="none" stroke="var(--ho-power)" stroke-width="4"
-                    stroke-dasharray="${powerLen} ${circumference - powerLen}" stroke-dashoffset=${-(airLen + 2)}
-                    transform="rotate(-90 ${cx} ${cy})"/>`
-              : nothing}
-            <text x=${cx} y=${cy - 1} text-anchor="middle" font-size="23" font-weight="700" fill="var(--ho-ink)">${formatNumber(heat, locale, 1)}</text>
-            <text x=${cx} y=${cy + 12} text-anchor="middle" font-size="9" fill="var(--ho-muted)" class="mono">${this._t("flow.heat")}</text>
-            ${running && live.cop !== undefined
-              ? svg`<text x=${cx} y=${cy + 27} text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ho-ink)" class="mono">COP ${formatNumber(live.cop, locale, 1)}</text>`
-              : nothing}
+            ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
+            ${centre(cx, cy, r, 25)}
           </g>
         </svg>
-        ${foot.length ? html`<div class="foot">${foot}</div>` : nothing}
+        ${this._footBlock(running)}
       </div>
     `;
   }
@@ -463,47 +685,50 @@ export class HeatOriginCard extends LitElement {
     this._tip = undefined;
   }
 
-  private _span(minutes: number) {
-    const s = formatSpan(minutes);
-    return html`${s.hours !== undefined ? html`${s.hours}<small>${this._t("unit.h")}</small> ` : nothing}${s.minutes !== undefined
-      ? html`${s.minutes}<small>${this._t("unit.min")}</small>`
-      : nothing}${s.seconds !== undefined ? html`${s.seconds}<small>${this._t("unit.s")}</small>` : nothing}`;
-  }
-
-  private _spanText(minutes: number): string {
-    const s = formatSpan(minutes);
-    return [
-      s.hours !== undefined ? `${s.hours} ${this._t("unit.h")}` : "",
-      s.minutes !== undefined ? `${s.minutes} ${this._t("unit.min")}` : "",
-      s.seconds !== undefined ? `${s.seconds} ${this._t("unit.s")}` : ""
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-
   private _segmentFill(kind: Segment["kind"]): string {
     if (kind === "blocked") return "url(#ho-hatch)";
     if (kind === "defrost") return "url(#ho-defrost)";
     return TONE[kind];
   }
 
+  private _patterns() {
+    return svg`<defs>
+      <pattern id="ho-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="4" height="4" fill="var(--ho-track)"/>
+        <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-muted)" stroke-width="1.4"/>
+      </pattern>
+      <pattern id="ho-defrost" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="4" height="4" fill="var(--ho-defrost)" opacity="0.45"/>
+        <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-defrost)" stroke-width="2"/>
+      </pattern>
+    </defs>`;
+  }
+
   private _renderDay() {
     const config = this._config as ResolvedConfig;
     const days = this._days();
     if (!days) {
-      return html`<div class="section"><div class="section-head">${this._t("day.title")}</div><div class="loading">${this._t("day.loading")}</div></div>`;
+      return html`<div class="section"><div class="section-head"><span>${this._t("day.title")}</span></div><div class="loading">${this._t("day.loading")}</div></div>`;
     }
 
     const locale = this._locale;
-    const X0 = config.day.days === 2 ? 52 : 4;
+    const two = config.day.days === 2;
+    // A narrow card shrinks the drawing; its words must not shrink with it.
+    const ts = this._narrow ? 1.45 : 1;
+    const X0 = two ? 52 * ts : 4;
     const X1 = W - 4;
     const span = X1 - X0;
     const hasPv = Boolean(config.entities.solar) && Object.values(this._pv).some((row) => row.some((v) => v !== undefined));
-    const PV_H = hasPv ? 20 : 0;
+    const PV_H = hasPv ? 18 : 0;
     const STRIP = 13;
-    const ROW = PV_H + STRIP + 20;
-    const H = days.length * ROW + 14;
+    const ROW = PV_H + STRIP + 16 * ts;
+    const H = days.length * ROW + 14 * ts;
     const pvMax = Math.max(1, ...Object.values(this._pv).flat().filter((v): v is number => v !== undefined));
+    const xh = (h: number) => X0 + (h / 24) * span;
+
+    const guides = [6, 12, 18].map(
+      (h) => svg`<line x1=${xh(h)} x2=${xh(h)} y1="2" y2=${H - 14 * ts} stroke="var(--ho-hairline)" stroke-width="1" stroke-dasharray="2 3"/>`
+    );
 
     const rows = days.map((day, i) => {
       const x = (t: number) => X0 + ((t - day.start) / DAY) * span;
@@ -511,7 +736,6 @@ export class HeatOriginCard extends LitElement {
       const base = top + PV_H;
       const stripY = base + 3;
       const isToday = i === days.length - 1;
-      const label = isToday ? this._t("day.today") : this._t("day.yesterday");
 
       let pvPaths: TemplateResult | typeof nothing = nothing;
       const pv = this._pv[day.start];
@@ -522,7 +746,7 @@ export class HeatOriginCard extends LitElement {
         if (pts.length > 1) {
           const edge = pts.map(([px, py], k) => `${k ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ");
           pvPaths = svg`
-            <path d="M${pts[0][0].toFixed(1)},${base} ${edge.replace(/^M/, "L")} L${pts[pts.length - 1][0].toFixed(1)},${base} Z" fill="var(--ho-sun)" opacity="0.2"/>
+            <path d="M${pts[0][0].toFixed(1)},${base} ${edge.replace(/^M/, "L")} L${pts[pts.length - 1][0].toFixed(1)},${base} Z" fill="var(--ho-sun)" opacity="0.18"/>
             <path d=${edge} fill="none" stroke="var(--ho-sun)" stroke-width="1.5" stroke-linejoin="round"/>`;
         }
       }
@@ -540,56 +764,49 @@ export class HeatOriginCard extends LitElement {
           @focus=${(e: Event) => this._showTip(e, text)} @blur=${this._hideTip}></rect>`;
       });
 
-      const marks = day.shortRuns.map((run) => svg`<path d="M${x(run.from) + 1},${stripY - 1} l-4,-6 h8 z" fill="var(--ho-warn)"/>`);
+      const marks = day.shortRuns.map((run) => {
+        const text = html`<b>${this._t("day.short_run")}</b> ${clock(new Date(run.from), locale)} · ${this._t("day.short_run_text", {
+          kind: this._t(`kind.${run.kind}`),
+          span: this._spanText((run.to - run.from) / 60000)
+        })}`;
+        return svg`<path class="seg short-mark" tabindex="0" d="M${x(run.from) + 1},${stripY - 1} l-5,-8 h10 z" fill="var(--ho-warn)"
+          @pointerenter=${(e: Event) => this._showTip(e, text)} @pointerleave=${this._hideTip}
+          @focus=${(e: Event) => this._showTip(e, text)} @blur=${this._hideTip}></path>`;
+      });
 
+      const openToday = isToday && day.end < day.start + DAY;
       return svg`
-        ${config.day.days === 2 ? svg`<text x="0" y=${stripY + 10} font-size="10.5" fill="var(--ho-muted)">${label}</text>` : nothing}
+        ${two ? svg`<text x="0" y=${stripY + 10} font-size=${10.5 * ts} fill="var(--ho-muted)">${this._t(isToday ? "day.today" : "day.yesterday")}</text>` : nothing}
         ${pvPaths}
         <rect x=${X0} y=${stripY} width=${span} height=${STRIP} rx="3" fill="var(--ho-track)"/>
-        ${isToday && day.end < day.start + DAY
+        ${openToday
           ? svg`<rect x=${x(day.end)} y=${stripY} width=${Math.max(0, X1 - x(day.end))} height=${STRIP} rx="3" fill="var(--ho-surface)" stroke="var(--ho-track)" stroke-dasharray="2 3"/>`
           : nothing}
         ${segs}
         ${marks}
-        ${isToday && day.end < day.start + DAY
-          ? svg`<line x1=${x(day.end)} x2=${x(day.end)} y1=${stripY - 3} y2=${stripY + STRIP + 3} stroke="var(--ho-ink)" stroke-width="1.5"/>`
-          : nothing}
+        ${openToday ? svg`<line x1=${x(day.end)} x2=${x(day.end)} y1=${stripY - 3} y2=${stripY + STRIP + 3} stroke="var(--ho-ink)" stroke-width="1.5"/>` : nothing}
       `;
     });
 
-    const axis = [0, 6, 12, 18, 24].map((h) => {
-      const ax = X0 + (h / 24) * span;
-      return svg`<text x=${ax} y=${H - 2} font-size="9" fill="var(--ho-muted)" class="mono" text-anchor=${h === 0 ? "start" : h === 24 ? "end" : "middle"}>${String(h).padStart(2, "0")}</text>`;
-    });
+    const axis = [0, 6, 12, 18, 24].map(
+      (h) =>
+        svg`<text x=${xh(h)} y=${H - 2} font-size=${9 * ts} fill="var(--ho-muted)" class="mono" text-anchor=${h === 0 ? "start" : h === 24 ? "end" : "middle"}>${String(h).padStart(2, "0")}</text>`
+    );
 
     const today = days[days.length - 1];
+    const yesterday = two ? days[0] : undefined;
     const kindsSeen = new Set(days.flatMap((d) => d.segments.map((s) => s.kind)));
     const legendOrder: Segment["kind"][] = ["heating", "hot_water", "cooling", "defrost", "blocked"];
-
-    const stats: TemplateResult[] = [html`<div class="stat"><span class="stat-k">${this._t("day.starts")}</span><span class="stat-v">${today.starts}</span></div>`];
-    for (const kind of ["hot_water", "heating", "cooling"] as const) {
-      const minutes = today.minutes[kind];
-      if (minutes === undefined || stats.length >= 3) continue;
-      stats.push(html`<div class="stat"><span class="stat-k">${this._t(`kind.${kind}`)}</span><span class="stat-v">${this._span(minutes)}</span></div>`);
-    }
-
-    const allShort = days.flatMap((d, i) => d.shortRuns.map((run) => ({ run, today: i === days.length - 1 })));
-    const latest = allShort.at(-1);
+    const third = today.minutes.cooling !== undefined && today.minutes.heating === undefined ? "cooling" : "heating";
+    const shortToday = today.shortRuns.length;
+    const shortYesterday = yesterday?.shortRuns.length ?? 0;
 
     return html`
       <div class="section">
-        <div class="section-head">${this._t("day.title")}</div>
+        <div class="section-head"><span>${this._t("day.title")}</span></div>
         <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${this._t("day.title")}">
-          <defs>
-            <pattern id="ho-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="4" height="4" fill="var(--ho-track)"/>
-              <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-muted)" stroke-width="1.4"/>
-            </pattern>
-            <pattern id="ho-defrost" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="4" height="4" fill="var(--ho-defrost)" opacity="0.45"/>
-              <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-defrost)" stroke-width="2"/>
-            </pattern>
-          </defs>
+          ${this._patterns()}
+          ${guides}
           ${rows}
           ${axis}
         </svg>
@@ -602,16 +819,25 @@ export class HeatOriginCard extends LitElement {
             )}
           ${hasPv ? html`<span><i class="sw pv"></i>${this._t("day.pv")}</span>` : nothing}
         </div>
-        <div class="stats">${stats}</div>
-        ${latest
+        <div class="stats">
+          <div class="stat"><span class="stat-k">${this._t("day.starts")}</span><span class="stat-v">${today.starts}</span></div>
+          ${config.day.short_run > 0
+            ? html`<div class="stat ${shortToday + shortYesterday > 0 ? "warn" : ""}">
+                <span class="stat-k">${this._t("day.short_runs")}</span>
+                <span class="stat-v"
+                  >${shortToday + shortYesterday > 0
+                    ? html`<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5 L13 12.5 H1 Z" fill="var(--ho-warn)"/></svg>`
+                    : nothing}${shortToday}${shortYesterday > 0 ? html`<small>${this._t("day.yesterday")} ${shortYesterday}</small>` : nothing}</span
+                >
+              </div>`
+            : nothing}
+          <div class="stat"><span class="stat-k">${this._t("kind.hot_water")}</span><span class="stat-v">${this._hm(today.minutes.hot_water ?? 0)}</span></div>
+          <div class="stat"><span class="stat-k">${this._t(`kind.${third}`)}</span><span class="stat-v">${this._hm(today.minutes[third] ?? 0)}</span></div>
+        </div>
+        ${config.day.cycling_from > 0 && shortToday >= config.day.cycling_from
           ? html`<div class="alert">
               <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5 L13 12.5 H1 Z" fill="none" stroke="var(--ho-warn)" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 5.5 V8.5 M7 10.4 V10.6" stroke="var(--ho-warn)" stroke-width="1.6" stroke-linecap="round"/></svg>
-              <span><b>${this._t("day.short_run")}</b> ${this._t(latest.today ? "day.today_at" : "day.yesterday_at", {
-                time: clock(new Date(latest.run.from), locale)
-              })}: ${this._t("day.short_run_text", {
-                kind: this._t(`kind.${latest.run.kind}`),
-                span: this._spanText((latest.run.to - latest.run.from) / 60000)
-              })}</span>
+              <span>${this._t("day.cycling", { n: String(shortToday) })}</span>
             </div>`
           : nothing}
       </div>
@@ -626,19 +852,19 @@ export class HeatOriginCard extends LitElement {
     const locale = this._locale;
     const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
 
-    const rows: Array<{ key: string; name: string; heat: number; electric: number; heatId?: string }> = [];
+    const rows: Array<{ name: string; heat: number; electric: number; heatId?: string }> = [];
     const heatingHeat = kwh(e.heating_heat_today);
     const heatingElectric = kwh(e.heating_electric_today);
     const waterHeat = kwh(e.hot_water_heat_today);
     const waterElectric = kwh(e.hot_water_electric_today);
     if (heatingHeat !== undefined && heatingElectric !== undefined)
-      rows.push({ key: "heating", name: this._t("kind.heating"), heat: heatingHeat, electric: heatingElectric, heatId: e.heating_heat_today });
+      rows.push({ name: this._t("kind.heating"), heat: heatingHeat, electric: heatingElectric, heatId: e.heating_heat_today });
     if (waterHeat !== undefined && waterElectric !== undefined)
-      rows.push({ key: "hot_water", name: this._t("kind.hot_water"), heat: waterHeat, electric: waterElectric, heatId: e.hot_water_heat_today });
+      rows.push({ name: this._t("kind.hot_water"), heat: waterHeat, electric: waterElectric, heatId: e.hot_water_heat_today });
     if (!rows.length) {
       const heat = kwh(e.heat_today);
       const electric = kwh(e.electric_today);
-      if (heat !== undefined && electric !== undefined) rows.push({ key: "total", name: this._t("origin.total"), heat, electric, heatId: e.heat_today });
+      if (heat !== undefined && electric !== undefined) rows.push({ name: this._t("origin.total"), heat, electric, heatId: e.heat_today });
     }
     if (!rows.length) return nothing;
 
@@ -647,136 +873,148 @@ export class HeatOriginCard extends LitElement {
     const scale = Math.max(...rows.map((r) => r.heat), 0.001);
     const share = totalHeat > 0 ? Math.max(0, (totalHeat - totalElectric) / totalHeat) : undefined;
 
-    const cops: TemplateResult[] = [];
-    const cop = (label: string, id: string | undefined) => {
-      const v = this._num(id);
-      if (v !== undefined) cops.push(html`<span>${label} <b>COP ${formatNumber(v, locale, 1)}</b></span>`);
-    };
-    cop(`${this._t("origin.month")} ${this._t("kind.heating")}`, e.cop_heating_month);
-    cop(`${this._t("origin.month")} ${this._t("kind.hot_water")}`, e.cop_hot_water_month);
-    cop(`${this._t("origin.year")} ${this._t("kind.heating")}`, e.cop_heating_year);
-    cop(`${this._t("origin.year")} ${this._t("kind.hot_water")}`, e.cop_hot_water_year);
+    const month = [this._num(e.cop_heating_month), this._num(e.cop_hot_water_month)];
+    const year = [this._num(e.cop_heating_year), this._num(e.cop_hot_water_year)];
+    const cell = (label: string, v: number | undefined) => (v === undefined ? html`<span></span>` : html`<span>${label} <b>${this._one(v)}</b></span>`);
+    const table =
+      month.some((v) => v !== undefined) || year.some((v) => v !== undefined)
+        ? html`<div class="year">
+            <span></span><span>${this._t("kind.heating")}</span><span>${this._t("kind.hot_water")}</span>
+            ${month.some((v) => v !== undefined)
+              ? html`<span>${this._t("origin.month")}</span>${cell(this._t("origin.az"), month[0])}${cell(this._t("origin.az"), month[1])}`
+              : nothing}
+            ${year.some((v) => v !== undefined)
+              ? html`<span>${this._t("origin.year")}</span>${cell(this._t("origin.jaz"), year[0])}${cell(this._t("origin.jaz"), year[1])}`
+              : nothing}
+          </div>`
+        : nothing;
 
     return html`
       <div class="section">
-        <div class="section-head"><span>${this._t("origin.title")}</span><b>${formatEnergy1(totalHeat, locale)} kWh</b></div>
+        <div class="section-head"><span>${this._t("origin.title")}</span><b>${this._one(totalHeat)} kWh</b></div>
         ${share !== undefined
-          ? html`<div class="origin-big"><span class="n">${formatNumber(share * 100, locale, 0)} %</span><span class="s">${this._t("origin.share")}</span></div>`
+          ? html`<div class="origin-big"><span class="n">${formatNumber(share * 100, locale, 0)} %</span><span class="s">${this._t(`origin.ambient.${config.source}`)}</span></div>`
           : nothing}
         ${rows.map((row) => {
           const air = Math.max(0, row.heat - row.electric);
-          const rowCop = row.electric > 0.01 ? row.heat / row.electric : undefined;
+          const factor = row.electric > 0.01 ? row.heat / row.electric : undefined;
           const widthPct = (row.heat / scale) * 100;
           const powerPct = row.heat > 0 ? (Math.min(row.electric, row.heat) / row.heat) * 100 : 0;
           return html`<div class="origin-row" @click=${() => this._moreInfo(row.heatId)}>
             <div class="origin-line">
-              <span class="name">${row.name} <span class="mono dim">${formatEnergy1(row.heat, locale)} kWh</span></span>
-              ${rowCop !== undefined ? html`<span class="mono">COP <b>${formatNumber(rowCop, locale, 1)}</b></span>` : nothing}
+              <span class="name">${row.name} <span class="mono dim">${this._one(row.heat)} kWh</span></span>
+              ${factor !== undefined ? html`<span class="mono dim">${this._t("origin.az")} <b style="color:var(--ho-ink)">${this._one(factor)}</b></span>` : nothing}
             </div>
             <div class="bar" style="width:${widthPct.toFixed(1)}%" role="img"
-              aria-label="${row.name}: ${formatEnergy1(row.electric, locale)} kWh ${this._t("origin.power")}, ${formatEnergy1(air, locale)} kWh ${this._t("flow.air")}">
+              aria-label="${row.name}: ${this._one(row.electric)} kWh ${this._t("origin.electricity")}, ${this._one(air)} kWh ${this._t("origin.ambient_short")}">
               ${row.heat > 0 ? html`<span style="width:${powerPct.toFixed(1)}%;background:var(--ho-power)"></span>` : nothing}
               ${air > 0 ? html`<span style="width:${(100 - powerPct).toFixed(1)}%;background:var(--ho-air)"></span>` : nothing}
             </div>
-            <div class="origin-sub">${formatEnergy1(row.electric, locale)} ${this._t("origin.power")} · ${formatEnergy1(air, locale)} ${this._t("flow.air")}</div>
+            <div class="origin-sub">${this._one(row.electric)} ${this._t("origin.electricity")} · ${this._one(air)} ${this._t("origin.ambient_short")}</div>
           </div>`;
         })}
         <div class="legend">
-          <span><i class="sw" style="background:var(--ho-power)"></i>${this._t("origin.power")}</span>
-          <span><i class="sw" style="background:var(--ho-air)"></i>${this._t("origin.air")}</span>
+          <span><i class="sw" style="background:var(--ho-power)"></i>${this._t("origin.electricity")}</span>
+          <span><i class="sw" style="background:var(--ho-air)"></i>${this._t(`origin.ambient.${config.source}`)}</span>
         </div>
-        ${cops.length ? html`<div class="foot">${cops}</div>` : nothing}
+        ${table}
       </div>
     `;
   }
 
   // ─── stores ────────────────────────────────────────────────
 
+  private _storeState(store: StoreConfig & { kind: StoreKind }, top: number | undefined): { text: string; tone: string } | undefined {
+    const mode = this._mode();
+    if ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"))
+      return { text: this._t("stores.charging"), tone: STORE_TONE[store.kind] };
+    if (top === undefined || !store.marks) return undefined;
+    const m = store.marks;
+    if (m.pv !== undefined && top >= m.pv) return { text: this._t("stores.pv_reached"), tone: "var(--ho-sun)" };
+    if (m.target !== undefined && top >= m.target) return { text: this._t("stores.target_reached"), tone: "var(--ho-ink)" };
+    if (m.eco !== undefined && top < m.eco) return { text: this._t("stores.below_eco"), tone: "var(--ho-warn)" };
+    if (m.target !== undefined)
+      return { text: this._t("stores.below", { k: this._one(m.target - top), mark: this._t("mark.target") }), tone: "var(--ho-warn)" };
+    return undefined;
+  }
+
   private _renderStores() {
     const config = this._config as ResolvedConfig;
-    const stores = config.stores;
-    if (!stores.length) return nothing;
+    if (!config.stores.length) return nothing;
     const locale = this._locale;
+    let totalUsable = 0;
+    let anyVolume = false;
+    const ramp = (t: number, tone: string) => {
+      const p = Math.round(Math.min(1, Math.max(0, (t - 25) / 35)) * 100);
+      return `color-mix(in srgb, ${tone} ${p}%, var(--ho-cold))`;
+    };
 
-    const values = stores.flatMap((s) => [this._num(s.top), this._num(s.bottom), ...Object.values(s.marks ?? {})]).filter(
-      (v): v is number => typeof v === "number" && Number.isFinite(v)
-    );
-    const lo = Math.floor((Math.min(...values, 40) - 5) / 5) * 5;
-    const hi = Math.ceil((Math.max(...values, 50) + 3) / 5) * 5;
-    const Y0 = 190;
-    const Y1 = 30;
-    const y = (t: number) => Y0 - ((Math.min(hi, Math.max(lo, t)) - lo) / (hi - lo)) * (Y0 - Y1);
-
-    const slot = (W - 40) / stores.length;
-    const tankW = 56;
-    const ticks: number[] = [];
-    for (let t = Math.ceil(lo / 10) * 10; t <= hi; t += 10) ticks.push(t);
-
-    const pvReached = stores.some((s) => {
-      const top = this._num(s.top);
-      return s.kind === "hot_water" && s.marks?.pv !== undefined && top !== undefined && top >= s.marks.pv;
-    });
-
-    const tanks = stores.map((store, i) => {
-      const tx = 40 + i * slot + Math.max(0, (slot - tankW - 70) / 2);
+    const rows = config.stores.map((store) => {
       const top = this._num(store.top);
       const bottom = this._num(store.bottom);
-      const tone: Record<StoreKind, string> = { hot_water: "var(--ho-hot-water)", buffer: "var(--ho-heating)" };
-      const fillY = top !== undefined ? y(top) : Y0;
-      const gradientId = `ho-tank-${i}`;
-      const markOrder: Array<keyof NonNullable<typeof store.marks>> = ["max", "pv", "target", "eco"];
-      const marks = markOrder
+      const tone = STORE_TONE[store.kind];
+      const state = this._storeState(store, top);
+      const mean = top !== undefined && bottom !== undefined ? (top + bottom) / 2 : top;
+      const floor = store.usable_min ?? (store.kind === "hot_water" ? 40 : 30);
+      const ceiling = store.marks?.pv ?? store.marks?.max ?? store.marks?.target ?? 60;
+      let energy: TemplateResult | typeof nothing = nothing;
+      if (store.volume && mean !== undefined) {
+        anyVolume = true;
+        const usable = Math.max(0, (store.volume * 1.163 * (mean - floor)) / 1000);
+        totalUsable += usable;
+        const pct = ceiling > floor ? Math.min(1, Math.max(0, (mean - floor) / (ceiling - floor))) : 0;
+        const filled = Math.round(pct * 10);
+        energy = html`<div class="store-energy">
+          <span class="store-kwh">${this._one(usable)}<small>kWh</small></span>
+          <span class="cells" role="img" aria-label="${formatNumber(pct * 100, locale, 0)} %">
+            ${Array.from({ length: 10 }, (_, i) => html`<span style=${i < filled ? `background:${tone}` : ""}></span>`)}
+          </span>
+          <span class="store-pct">${formatNumber(pct * 100, locale, 0)} % · ${this._t("stores.usable")}</span>
+        </div>`;
+      }
+      const layering = top !== undefined && bottom !== undefined ? top - bottom : undefined;
+      const sub =
+        bottom !== undefined
+          ? `${this._t("flow.bottom")} ${formatTemp(bottom, locale)} · ${layering !== undefined && Math.abs(layering) >= 0.5 ? `Δ ${this._one(layering)} K` : this._t("stores.even")}`
+          : undefined;
+      const marks = (["eco", "target", "pv", "max"] as const)
         .filter((k) => store.marks?.[k] !== undefined)
         .map((k) => {
           const v = store.marks![k]!;
-          const my = y(v);
-          const colour = k === "pv" ? "var(--ho-sun)" : k === "target" ? "var(--ho-ink)" : "var(--ho-muted)";
-          return svg`<line x1=${tx + tankW + 3} x2=${tx + tankW + 12} y1=${my} y2=${my} stroke=${colour} stroke-width="1.5"/>
-            <text x=${tx + tankW + 15} y=${my + 3.2} font-size="9.5" fill=${colour} class="mono">${this._t(`mark.${k}`)} ${formatNumber(v, locale, v % 1 ? 1 : 0)}</text>`;
+          const reached = top !== undefined && top >= v;
+          return html`<span class="mark ${reached ? "reached" : ""}" style="--tone:${k === "pv" ? "var(--ho-sun)" : tone}"
+            >${this._t(`mark.${k}`)} ${formatNumber(v, locale, v % 1 ? 1 : 0)}</span
+          >`;
         });
-      const layering = top !== undefined && bottom !== undefined && store.kind === "buffer" && top - bottom >= 0.5;
-      return svg`
-        <defs>
-          <linearGradient id=${gradientId} x1="0" y1="1" x2="0" y2="0">
-            <stop offset="0" stop-color=${tone[store.kind]} stop-opacity=${bottom !== undefined && top !== undefined && bottom < top ? 0.62 : 1}/>
-            <stop offset="1" stop-color=${tone[store.kind]}/>
-          </linearGradient>
-        </defs>
-        <g class="clickable" @click=${() => this._moreInfo(store.top)}>
-          <text x=${tx + tankW / 2} y="16" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)">${store.name}</text>
-          <rect x=${tx} y="24" width=${tankW} height=${Y0 - 24 + 4} rx="22" fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
-          ${top !== undefined
-            ? svg`<path d="M${tx + 3} ${fillY} H${tx + tankW - 3} V${Y0 - 17} a19 19 0 0 1 -19 19 H${tx + 22} a19 19 0 0 1 -19 -19 Z" fill="url(#${gradientId})"/>
-                <text x=${tx + tankW / 2} y=${Math.min(fillY + 24, Y0 - 40)} text-anchor="middle" font-size="14" font-weight="700" fill="#fff" class="mono">${formatTemp(top, locale)}</text>
-                <text x=${tx + tankW / 2} y=${Math.min(fillY + 35, Y0 - 29)} text-anchor="middle" font-size="8" fill="#fff" opacity="0.85" class="mono">${this._t("stores.top")}</text>`
-            : nothing}
-          ${bottom !== undefined
-            ? svg`<text x=${tx + tankW / 2} y=${Y0 - 12} text-anchor="middle" font-size="10.5" font-weight="600" fill="#fff" class="mono">${formatTemp(bottom, locale)}</text>
-                <text x=${tx + tankW / 2} y=${Y0 - 2} text-anchor="middle" font-size="7.5" fill="#fff" opacity="0.85" class="mono">${this._t("stores.bottom")}</text>`
-            : nothing}
-          ${marks}
-          ${layering
-            ? svg`<text x=${tx + tankW + 8} y=${fillY + 4} font-size="9.5" fill="var(--ho-muted)" class="mono">Δ ${formatNumber(top! - bottom!, locale, 1)} K</text>
-                <text x=${tx + tankW + 8} y=${fillY + 16} font-size="9.5" fill="var(--ho-muted)">${this._t("stores.layering")}</text>`
-            : nothing}
-        </g>
-      `;
+
+      return html`<div class="store" @click=${() => this._moreInfo(store.top)}>
+        <div class="tank" role="img" aria-label="${store.name}"
+          style="background: linear-gradient(to top, ${ramp(bottom ?? top ?? 25, tone)}, ${ramp(top ?? 25, tone)})">
+          ${top !== undefined ? html`<span class="probe" style="top: 20%"></span>` : nothing}
+          ${bottom !== undefined ? html`<span class="probe" style="top: 80%"></span>` : nothing}
+        </div>
+        <div class="store-info">
+          <span class="store-name">${store.name}</span>
+          <span class="store-temp">${top !== undefined ? formatTemp(top, locale) : "–"}<small>°C</small></span>
+          ${state ? html`<span class="store-state" style="color:${state.tone}">${state.text}</span>` : nothing}
+          ${sub ? html`<span class="store-sub">${sub}</span>` : nothing}
+        </div>
+        ${energy}
+        ${marks.length ? html`<div class="marks">${marks}</div>` : nothing}
+      </div>`;
     });
 
-    const circulation = stores
+    const circulation = config.stores
       .filter((s) => s.circulation && this._num(s.circulation) !== undefined)
       .map((s) => html`<span>${this._t("stores.circulation")} <b>${this._temp(s.circulation)} °C</b></span>`);
 
     return html`
       <div class="section">
-        <div class="section-head"><span>${this._t("stores.title")}</span>${pvReached ? html`<b>${this._t("stores.pv_reached")}</b>` : nothing}</div>
-        <svg viewBox="0 0 ${W} 210" role="img" aria-label="${this._t("stores.title")}">
-          ${ticks.map(
-            (t) => svg`<text x="4" y=${y(t) + 3} font-size="9" fill="var(--ho-muted)" class="mono">${t}°</text>
-              <line x1="30" x2=${W} y1=${y(t)} y2=${y(t)} stroke="var(--ho-hairline)" stroke-dasharray="2 4"/>`
-          )}
-          ${tanks}
-        </svg>
+        <div class="section-head">
+          <span>${this._t("stores.title")}</span>
+          ${anyVolume ? html`<b>≈ ${this._one(totalUsable)} kWh ${this._t("stores.usable")}</b>` : nothing}
+        </div>
+        ${rows}
         ${circulation.length ? html`<div class="foot">${circulation}</div>` : nothing}
       </div>
     `;
@@ -804,13 +1042,12 @@ export class HeatOriginCard extends LitElement {
     }
 
     const sub: string[] = [];
-    if (running && live.solar !== undefined && live.electric !== undefined && live.solar >= live.electric) sub.push(this._t("state.on_sun"));
+    if (running) sub.push(this._sourceLabel(this._shares(live.electric)));
     if (running && live.cop !== undefined) sub.push(`COP ${formatNumber(live.cop, locale, 1)}`);
     const outdoor = this._temp(config.entities.outdoor);
     if (outdoor !== undefined && figureId !== config.entities.outdoor) sub.push(`${this._t("flow.outdoor")} ${outdoor} °C`);
 
-    const days = this._days();
-    const today = days?.at(-1);
+    const today = this._days()?.at(-1);
     const x = (t: number) => (today ? ((t - today.start) / DAY) * W : 0);
 
     return html`
@@ -825,16 +1062,7 @@ export class HeatOriginCard extends LitElement {
           : nothing}
         ${today
           ? html`<svg class="strip" viewBox="0 0 ${W} 12" role="img" aria-label="${this._t("day.today")}">
-              <defs>
-                <pattern id="ho-hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                  <rect width="4" height="4" fill="var(--ho-track)"/>
-                  <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-muted)" stroke-width="1.4"/>
-                </pattern>
-                <pattern id="ho-defrost" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                  <rect width="4" height="4" fill="var(--ho-defrost)" opacity="0.45"/>
-                  <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-defrost)" stroke-width="2"/>
-                </pattern>
-              </defs>
+              ${this._patterns()}
               <rect x="0" y="4" width=${W} height="5" rx="2.5" fill="var(--ho-track)"/>
               ${today.segments.map(
                 (seg) => svg`<rect x=${x(seg.from) + 0.5} y="4" width=${Math.max(1.5, x(seg.to) - x(seg.from) - 1)} height="5" rx="1.5" fill=${this._segmentFill(seg.kind)}/>`
@@ -855,11 +1083,6 @@ export class HeatOriginCard extends LitElement {
       return html`<svg viewBox="0 0 20 20"><path d="M10 2 V18 M3 6 L17 14 M17 6 L3 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`;
     return html`<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 6.5 V10 L12.5 11.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`;
   }
-}
-
-/** Energy to one decimal, the way the day's totals read. */
-function formatEnergy1(value: number, locale: string): string {
-  return formatNumber(value, locale, Math.abs(value) < 10 ? 2 : 1);
 }
 
 if (!customElements.get(CARD_TYPE)) {

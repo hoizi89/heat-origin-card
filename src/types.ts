@@ -19,6 +19,11 @@ export type ModeKind = "heating" | "hot_water" | "cooling" | "defrost" | "blocke
 export type SectionName = "flow" | "day" | "origin" | "stores";
 export type CardShape = "standard" | "compact";
 export type StoreKind = "hot_water" | "buffer";
+export type CircuitKind = "heating" | "circulation";
+/** Where the ambient heat comes from. */
+export type HeatSource = "air" | "ground" | "water";
+/** Where the electricity comes from right now. */
+export type ElectricSource = "solar" | "battery" | "grid";
 
 export interface ModeWords {
   heating?: string[];
@@ -42,8 +47,14 @@ export interface HeatOriginEntities {
   /** Litres per hour through the heat pump. */
   volume_flow?: string;
   outdoor?: string;
-  /** PV power, for the day band and the "on sun" note. */
+  /** PV power, for the day band and the colour of the electricity. */
   solar?: string;
+  /** House consumption; with it the electricity is split by source like the house's. */
+  house_power?: string;
+  /** Grid power, positive while importing (see grid_invert). */
+  grid_power?: string;
+  /** Battery power, positive while discharging (see battery_invert). */
+  battery_power?: string;
   /** A live COP the integration computes; without it the card divides heat by electricity. */
   cop?: string;
   heating_heat_today?: string;
@@ -61,6 +72,12 @@ export interface HeatOriginEntities {
 
 export interface CircuitConfig {
   name: string;
+  /** A heating circuit takes heat from the heat pump; circulation only moves hot water. */
+  kind?: CircuitKind;
+  /** A pump or valve whose "on" means the circuit is running. */
+  pump?: string;
+  /** One temperature, for loops without flow and return (circulation). */
+  temperature?: string;
   /** The circuit's own state, e.g. HEATING, CH-SUMMER, OFF. */
   state?: string;
   flow?: string;
@@ -85,6 +102,10 @@ export interface StoreConfig {
   circulation?: string;
   /** Set-points entered as numbers: many integrations report them wrongly. */
   marks?: StoreMarks;
+  /** Litres; with it the card shows the usable heat in kWh. */
+  volume?: number;
+  /** The lowest useful temperature: 40 °C for a shower, 30 °C for underfloor heating. */
+  usable_min?: number;
 }
 
 export interface ExtraFigure {
@@ -106,6 +127,8 @@ export interface DayOptions {
   days?: 1 | 2;
   /** Runs shorter than this many seconds are flagged. 0 turns the flag off. */
   short_run?: number;
+  /** From this many short runs in a day, a notice says the heat pump is cycling. */
+  cycling_from?: number;
 }
 
 export interface SectionToggles {
@@ -127,6 +150,9 @@ export interface HeatOriginCardConfig {
   stores?: StoreConfig[];
   flow?: FlowOptions;
   day?: DayOptions;
+  source?: HeatSource;
+  grid_invert?: boolean;
+  battery_invert?: boolean;
 }
 
 export interface ResolvedConfig {
@@ -136,10 +162,13 @@ export interface ResolvedConfig {
   sections: Required<Omit<SectionToggles, "order">> & { order: SectionName[] };
   entities: HeatOriginEntities;
   modes: Required<ModeWords>;
-  circuits: CircuitConfig[];
+  circuits: Array<CircuitConfig & { kind: CircuitKind }>;
   stores: Array<StoreConfig & { kind: StoreKind }>;
   flow: Required<FlowOptions>;
   day: Required<DayOptions>;
+  source: HeatSource;
+  grid_invert: boolean;
+  battery_invert: boolean;
 }
 
 declare global {

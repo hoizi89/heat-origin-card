@@ -85,6 +85,19 @@ export const WORD_LABELS: Record<string, Record<string, string>> = {
   }
 };
 
+/** Shorter words for tight boxes; anything longer is cut with an ellipsis. */
+const SHORT: Record<string, Record<string, string>> = {
+  en: { "prio-stop": "HW first", "release-off": "Not released", "time-off": "Scheduled off", "stby-heating": "Ready" },
+  de: { "prio-stop": "Vorrang", "release-off": "Gesperrt", "time-off": "Zeit aus", "mintemp-block": "Zu kalt" }
+};
+
+export function shortWordLabel(state: string | undefined, locale: string, max: number): string {
+  const lang = locale.split("-")[0];
+  const short = state ? (SHORT[lang] ?? SHORT.en)[norm(state)] : undefined;
+  const text = short ?? wordLabel(state, locale);
+  return text.length <= max ? text : text.slice(0, max - 1) + "…";
+}
+
 export function wordLabel(state: string | undefined, locale: string): string {
   if (!state) return "–";
   const table = WORD_LABELS[locale.split("-")[0]] ?? WORD_LABELS.en;

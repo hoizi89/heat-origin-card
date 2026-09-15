@@ -29,7 +29,7 @@ async function mount(config: HeatOriginCardConfig, hass = makeHass()) {
 }
 
 /** Every text node on its own, the way the eye separates what layout separates. */
-const text = (root: ShadowRoot) => {
+const text = (root: ShadowRoot | Element) => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const parts: string[] = [];
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -40,27 +40,46 @@ const text = (root: ShadowRoot) => {
   return parts.join(" ").replace(/\s+/g, " ");
 };
 
-describe("the full card on the real afternoon", () => {
-  it("names the state in the chip, with PV while the sun covers the draw", async () => {
-    const { root } = await mount(FULL_CONFIG);
-    expect(root.querySelector(".chip")?.textContent).toContain("Warmwasser · PV");
+const idle = () =>
+  makeHass({
+    [IDS.mode]: { entity_id: IDS.mode, state: "STBY", attributes: {}, last_changed: new Date(2026, 8, 15, 13, 39, 46).toISOString() }
   });
 
-  it("draws the heat flowing to hot water and the circuits with their own words and spread", async () => {
+describe("the flow", () => {
+  it("names the state and since when in the chip", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    expect(root.querySelector(".chip")?.textContent?.replace(/\s+/g, " ")).toContain("Warmwasser · seit 13:00");
+  });
+
+  it("colours the electricity by where it comes from and names the source", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    expect(text(root)).toContain("Strom · PV");
+    const grid = await mount(
+      FULL_CONFIG,
+      makeHass({
+        [IDS.solar]: { entity_id: IDS.solar, state: "0", attributes: { unit_of_measurement: "W" } },
+        [IDS.grid_power]: { entity_id: IDS.grid_power, state: "2700", attributes: { unit_of_measurement: "W" } }
+      })
+    );
+    expect(text(grid.root)).toContain("Strom · Netz");
+  });
+
+  it("draws the heat flowing to hot water, the circuits with their words, and the circulation running", async () => {
     const { root } = await mount(FULL_CONFIG);
     const t = text(root);
     expect(t).toContain("6,6");
     expect(t).toContain("COP 3,8");
-    expect(t).toContain("57,6 °C · lädt");
     expect(t).toContain("Sommer");
     expect(t).toContain("25,8/24,7 · Δ 1,1 K");
-    expect(t).toContain("24,5 °C");
+    expect(t).toContain("24,5°");
+    expect(t).toContain("34,3 °C · läuft");
+    // Only the hot water is fed by the heat pump; the circulation runs on its own.
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(1);
   });
 
-  it("puts flow, return, spread, volume and extra figures under the flow", async () => {
+  it("puts flow, return, spread, volume and extra figures under the flow while running", async () => {
     const { root } = await mount(FULL_CONFIG);
-    const foot = root.querySelector(".section .foot")?.textContent?.replace(/\s+/g, " ");
+    const foot = text(root.querySelector(".section .foot") as Element);
     expect(foot).toContain("Spreizung 3,2 K");
     expect(foot).toContain("1.752 l/h");
     expect(foot).toContain("Heißgas 87,5 °C");
@@ -72,47 +91,90 @@ describe("the full card on the real afternoon", () => {
     expect(text(root)).not.toContain("Δ 1,1 K");
   });
 
-  it("reads the day band from history and flags yesterday's short run", async () => {
+  it("tells the last run while standing still instead of zeros", async () => {
+    const { root } = await mount(FULL_CONFIG, idle());
+    const t = text(root);
+    expect(root.querySelector(".chip")?.textContent).toContain("Bereit");
+    expect(t).toContain("zuletzt");
+    expect(t).toContain("40 min");
+    expect(t).toContain("Heute 3 Starts");
+    expect(t).not.toContain("0,00 kW");
+    expect(root.querySelectorAll(".flow-dash")).toHaveLength(0);
+  });
+});
+
+describe("the day band", () => {
+  it("reads history, counts starts and short runs as figures, without a notice for one short run", async () => {
     const { root, hass } = await mount(FULL_CONFIG);
-    expect(hass.calls).toContain("history/history_during_period");
+    expect((hass as ReturnType<typeof makeHass>).calls).toContain("history/history_during_period");
     expect(root.querySelectorAll("rect.seg").length).toBeGreaterThan(8);
-    const t = text(root);
-    expect(t).toContain("Starts heute 3");
-    const alert = root.querySelector(".alert")?.textContent?.replace(/\s+/g, " ").trim();
-    expect(alert).toBe("Kurzlauf gestern 15:43: Heizen nach 30 s wieder aus");
-    expect(t).toContain("PV-Leistung");
+    const stats = text(root.querySelector(".stats") as Element);
+    expect(stats).toContain("Starts heute 3");
+    expect(stats).toContain("Kurzläufe 0 Gestern 1");
+    expect(stats).toContain("Warmwasser 1:59");
+    expect(stats).toContain("Heizen 2:16");
+    expect(root.querySelector(".alert")).toBeNull();
+    expect(root.querySelectorAll("path.short-mark")).toHaveLength(1);
   });
 
-  it("splits the day's heat into electricity and air", async () => {
+  it("raises a notice once the heat pump cycles", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, day: { cycling_from: 1, days: 2 } });
+    // Yesterday's single short run does not count for today.
+    expect(root.querySelector(".alert")).toBeNull();
+  });
+});
+
+describe("heat today", () => {
+  it("speaks of ambient heat and performance factors", async () => {
     const { root } = await mount(FULL_CONFIG);
     const t = text(root);
-    expect(t).toContain("80 % der Wärme kam heute aus der Luft");
-    expect(t).toContain("COP 6,2");
-    expect(t).toContain("Jahr Heizen COP 6,0");
+    expect(t).toContain("80 % Umweltwärme aus der Luft");
+    expect(t).toContain("AZ 6,2");
+    expect(t).toContain("JAZ 6,0");
+    expect(t).toContain("27,6 kWh");
+    expect(t).not.toContain("KWH");
   });
 
-  it("draws both stores with their marks, layering and circulation", async () => {
+  it("names the ground for a ground source heat pump", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, source: "ground" });
+    expect(text(root)).toContain("Umweltwärme aus dem Erdreich");
+  });
+});
+
+describe("storage", () => {
+  it("shows the temperature first, the layering, the marks and the usable heat from the volume", async () => {
     const { root } = await mount(FULL_CONFIG);
-    const t = text(root);
-    expect(t).toContain("PV-Ziel erreicht");
-    expect(t).toContain("Soll 48,5");
-    expect(t).toContain("Δ 3,5 K");
-    expect(t).toContain("Zirkulation 34,3 °C");
+    const stores = [...root.querySelectorAll(".store")].map((s) => text(s));
+    expect(stores[0]).toContain("Warmwasser 57,6 °C lädt unten 57,6 · gleichmäßig");
+    expect(stores[0]).toContain("6,1 kWh");
+    expect(stores[0]).toContain("100 %");
+    expect(stores[0]).toContain("PV 57,5");
+    expect(stores[1]).toContain("unten 51,7 · Δ 3,5 K");
+    expect(stores[1]).toContain("8,2 kWh");
+    expect(text(root)).toContain("≈ 14,3 kWh nutzbar");
+    expect(root.querySelectorAll(".mark.reached")).toHaveLength(3);
   });
 
+  it("says how far below target a store is once nothing charges it", async () => {
+    const hass = makeHass({
+      [IDS.mode]: { entity_id: IDS.mode, state: "STBY", attributes: {} },
+      "sensor.lambdawp_boil1_actual_high_temperature": {
+        entity_id: "sensor.lambdawp_boil1_actual_high_temperature",
+        state: "46.0",
+        attributes: { unit_of_measurement: "°C" }
+      }
+    });
+    const { root } = await mount(FULL_CONFIG, hass);
+    expect(text(root.querySelector(".store") as Element)).toContain("2,5 K unter Soll");
+  });
+});
+
+describe("general", () => {
   it("shows only the chosen sections", async () => {
-    const { root, hass } = await mount({ ...FULL_CONFIG, sections: { flow: false, day: false, stores: false } });
+    const { root } = await mount({ ...FULL_CONFIG, sections: { flow: false, day: false, stores: false } });
     expect(root.querySelector(".flow-dash")).toBeNull();
     expect(text(root)).not.toContain("Starts heute");
-    expect(text(root)).toContain("aus der Luft");
-    expect(hass.calls).not.toContain("history/history_during_period");
-  });
-
-  it("stands idle quietly: no flowing line, the raw word translated", async () => {
-    const hass = makeHass({ [IDS.mode]: { entity_id: IDS.mode, state: "STBY", attributes: {} } });
-    const { root } = await mount(FULL_CONFIG, hass);
-    expect(root.querySelector(".chip")?.textContent).toContain("Bereit");
-    expect(root.querySelectorAll(".flow-dash")).toHaveLength(0);
+    expect(text(root)).toContain("Umweltwärme");
   });
 
   it("warns plainly when the state sensor does not exist", async () => {
@@ -122,17 +184,15 @@ describe("the full card on the real afternoon", () => {
 
   it("speaks English where the dashboard does", async () => {
     const { root } = await mount(FULL_CONFIG, makeHass({}, "en"));
-    expect(root.querySelector(".chip")?.textContent).toContain("Hot water · PV");
-    expect(text(root)).toContain("of today's heat came from the air");
+    expect(root.querySelector(".chip")?.textContent).toContain("Hot water");
+    expect(text(root)).toContain("ambient heat from the air");
   });
-});
 
-describe("the compact form", () => {
-  it("is one row: the state, the hot water temperature and today's thread", async () => {
+  it("the compact form is one row: the state, the hot water temperature and today's thread", async () => {
     const { root } = await mount({ ...FULL_CONFIG, shape: "compact" });
-    const card = root.querySelector("ha-card");
-    expect(card?.classList.contains("compact")).toBe(true);
+    expect(root.querySelector("ha-card")?.classList.contains("compact")).toBe(true);
     expect(text(root)).toContain("Warmwasser");
+    expect(text(root)).toContain("PV");
     expect(root.querySelector(".big")?.textContent).toContain("57,6");
     expect(root.querySelector("svg.strip")).not.toBeNull();
   });

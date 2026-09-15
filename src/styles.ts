@@ -3,13 +3,17 @@ import { css } from "lit";
 export const cardStyles = css`
   :host {
     /* Mode colours checked for colour-blind separation on light and dark cards. */
-    --ho-heating: var(--heat-origin-heating-color, #dc6f2a);
-    --ho-hot-water: var(--heat-origin-hot-water-color, #c94f9b);
+    --ho-heating: var(--heat-origin-heating-color, #e0702a);
+    --ho-hot-water: var(--heat-origin-hot-water-color, #c9365f);
     --ho-cooling: var(--heat-origin-cooling-color, #5b8fd9);
     --ho-defrost: var(--heat-origin-defrost-color, #5b8fd9);
-    --ho-air: var(--heat-origin-air-color, #2e9e8f);
-    --ho-power: var(--heat-origin-power-color, #7d7fe0);
-    --ho-sun: var(--heat-origin-sun-color, var(--energy-solar-color, #ffb020));
+    --ho-air: var(--heat-origin-air-color, #57a85a);
+    /* The electricity wears the colours Power Origin gives its sources. */
+    --ho-sun: var(--heat-origin-sun-color, var(--power-origin-sun-color, #ffb020));
+    --ho-grid: var(--heat-origin-grid-color, var(--power-origin-grid-color, #6e93d6));
+    --ho-battery: var(--heat-origin-battery-color, var(--power-origin-battery-color, #4ecdc4));
+    --ho-power: var(--heat-origin-power-color, #8e97ad);
+    --ho-cold: var(--heat-origin-cold-color, #3d4a61);
     --ho-warn: var(--heat-origin-warning-color, #e5a53a);
     --ho-ink: var(--primary-text-color, #171a24);
     --ho-muted: var(--secondary-text-color, #666e88);
@@ -24,10 +28,10 @@ export const cardStyles = css`
     color: var(--ho-ink);
     position: relative;
     container-type: inline-size;
-    padding: 16px 16px 14px;
+    padding: 14px 14px 12px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     overflow: hidden;
   }
 
@@ -55,8 +59,7 @@ export const cardStyles = css`
     gap: 6px;
     font-family: var(--ho-mono);
     font-size: 10.5px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0.03em;
     padding: 4px 9px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--tone, var(--ho-muted)) 18%, transparent);
@@ -79,7 +82,7 @@ export const cardStyles = css`
   }
 
   .section + .section {
-    padding-top: 14px;
+    padding-top: 12px;
     border-top: 1px solid var(--ho-hairline);
   }
 
@@ -91,13 +94,18 @@ export const cardStyles = css`
     font-family: var(--ho-mono);
     font-size: 10px;
     letter-spacing: 0.12em;
-    text-transform: uppercase;
     color: var(--ho-muted);
+  }
+
+  /* Only the label is set in capitals; figures keep the case of their units: kWh, not KWH. */
+  .section-head > span:first-child {
+    text-transform: uppercase;
   }
 
   .section-head b {
     color: var(--ho-ink);
     font-weight: 500;
+    letter-spacing: 0.02em;
   }
 
   svg {
@@ -119,14 +127,16 @@ export const cardStyles = css`
     cursor: pointer;
   }
 
+  /* Bright beads running along the active line, readable on a tablet across the room. */
   .flow-dash {
-    stroke-dasharray: 6 8;
-    animation: run 1.1s linear infinite;
+    stroke-dasharray: 0 12;
+    stroke-linecap: round;
+    animation: run 0.9s linear infinite;
   }
 
   @keyframes run {
     to {
-      stroke-dashoffset: -14;
+      stroke-dashoffset: -12;
     }
   }
 
@@ -187,7 +197,7 @@ export const cardStyles = css`
 
   .stats {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -213,6 +223,20 @@ export const cardStyles = css`
     font-size: 16px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    white-space: nowrap;
+  }
+
+  .stat.warn .stat-v {
+    color: var(--ho-warn);
+  }
+
+  .stat.warn .stat-v svg {
+    width: 11px;
+    height: 11px;
+    align-self: center;
   }
 
   .stat-v small {
@@ -401,7 +425,195 @@ export const cardStyles = css`
     flex-basis: 100%;
   }
 
-  @container (max-width: 300px) {
+  .year {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 3px 12px;
+    font-family: var(--ho-mono);
+    font-size: 11px;
+    color: var(--ho-muted);
+    padding-top: 8px;
+    border-top: 1px solid var(--ho-hairline);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .year b {
+    color: var(--ho-ink);
+    font-weight: 500;
+  }
+
+  /* Storage: the number first, the tank as its layering, the usable heat as cells. */
+  .store {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    align-items: start;
+    cursor: pointer;
+  }
+
+  .store + .store {
+    padding-top: 10px;
+    border-top: 1px dashed var(--ho-hairline);
+  }
+
+  .tank {
+    grid-row: 1 / span 2;
+    align-self: stretch;
+    min-height: 74px;
+    border-radius: 11px;
+    border: 1.5px solid var(--ho-hairline);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tank .probe {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1.5px solid rgba(255, 255, 255, 0.8);
+  }
+
+  .store-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .store-name {
+    font-size: 12px;
+    color: var(--ho-muted);
+  }
+
+  .store-temp {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .store-temp small {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ho-muted);
+    margin-left: 2px;
+  }
+
+  .store-state {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .store-sub {
+    font-family: var(--ho-mono);
+    font-size: 10.5px;
+    color: var(--ho-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .store-energy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+  }
+
+  .store-kwh {
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .store-kwh small {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ho-muted);
+    margin-left: 2px;
+  }
+
+  .cells {
+    display: grid;
+    grid-template-columns: repeat(10, 8px);
+    gap: 2px;
+    height: 14px;
+  }
+
+  .cells span {
+    border-radius: 2px;
+    background: var(--ho-track);
+  }
+
+  .store-pct {
+    font-family: var(--ho-mono);
+    font-size: 10px;
+    color: var(--ho-muted);
+  }
+
+  .marks {
+    grid-column: 2 / span 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .mark {
+    font-family: var(--ho-mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--ho-hairline);
+    color: var(--ho-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mark.reached {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--tone) 22%, transparent);
+    color: var(--ho-ink);
+  }
+
+  /* The flow in a narrow column: the heat pump across, the takers as a list. */
+  .sinks {
+    display: grid;
+    gap: 5px;
+  }
+
+  .sink {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1.5px solid var(--ho-hairline);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  .sink.active {
+    border-color: var(--tone);
+    background: color-mix(in srgb, var(--tone) 14%, transparent);
+  }
+
+  .sink .v {
+    font-family: var(--ho-mono);
+    font-size: 11px;
+    color: var(--ho-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sink.active .v {
+    color: var(--ho-ink);
+  }
+
+  @container (max-width: 340px) {
     .stats {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

@@ -28,6 +28,10 @@ const states = Object.fromEntries([
   e("sensor.lambdawp_hp1_volume_flow_heat_sink", 1752, "l/h"),
   e("sensor.lambdawp_ambient_temperature", 20.2, "°C"),
   e("sensor.pv_power", 8975, "W"),
+  e("sensor.house_consumption", 2700, "W"),
+  e("sensor.grid_power_inverted", -6300, "W"),
+  e("sensor.battery_power", -40, "W"),
+  e("switch.zirkulationspumpe", "on"),
   e("sensor.lambdawp_hp1_heating_thermal_energy_daily", 15.14, "kWh"),
   e("sensor.lambdawp_hp1_heating_energy_daily", 2.44, "kWh"),
   e("sensor.lambdawp_hp1_hot_water_thermal_energy_daily", 12.5, "kWh"),
@@ -69,6 +73,9 @@ const config = {
     volume_flow: "sensor.lambdawp_hp1_volume_flow_heat_sink",
     outdoor: "sensor.lambdawp_ambient_temperature",
     solar: "sensor.pv_power",
+    house_power: "sensor.house_consumption",
+    grid_power: "sensor.grid_power_inverted",
+    battery_power: "sensor.battery_power",
     heating_heat_today: "sensor.lambdawp_hp1_heating_thermal_energy_daily",
     heating_electric_today: "sensor.lambdawp_hp1_heating_energy_daily",
     hot_water_heat_today: "sensor.lambdawp_hp1_hot_water_thermal_energy_daily",
@@ -78,18 +85,21 @@ const config = {
   },
   circuits: [
     { name: "FBH EG", state: "sensor.lambdawp_hc1_operating_state", flow: "sensor.lambdawp_hc1_flow_line_temperature", return: "sensor.lambdawp_hc1_return_line_temperature", room: "sensor.lambdawp_hc1_room_device_temperature" },
-    { name: "Heizkörper OG", state: "sensor.lambdawp_hc2_operating_state", flow: "sensor.lambdawp_hc2_flow_line_temperature", return: "sensor.lambdawp_hc2_return_line_temperature", room: "sensor.lambdawp_hc2_room_device_temperature" }
+    { name: "Heizkörper OG", state: "sensor.lambdawp_hc2_operating_state", flow: "sensor.lambdawp_hc2_flow_line_temperature", return: "sensor.lambdawp_hc2_return_line_temperature", room: "sensor.lambdawp_hc2_room_device_temperature" },
+    { name: "Zirkulation", pump: "switch.zirkulationspumpe", temperature: "sensor.lambdawp_boil1_actual_circulation_temperature" }
   ],
   stores: [
-    { name: "Warmwasser", top: "sensor.lambdawp_boil1_actual_high_temperature", bottom: "sensor.lambdawp_boil1_actual_low_temperature", circulation: "sensor.lambdawp_boil1_actual_circulation_temperature", marks: { eco: 44.5, target: 48.5, pv: 57.5 } },
-    { name: "Puffer", top: "sensor.lambdawp_buff1_actual_high_temperature", bottom: "sensor.lambdawp_buff1_actual_low_temperature" }
+    { name: "Warmwasser", top: "sensor.lambdawp_boil1_actual_high_temperature", bottom: "sensor.lambdawp_boil1_actual_low_temperature", marks: { eco: 44.5, target: 48.5, pv: 57.5 }, volume: 300 },
+    { name: "Puffer", top: "sensor.lambdawp_buff1_actual_high_temperature", bottom: "sensor.lambdawp_buff1_actual_low_temperature", volume: 300 }
   ],
   flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas" }] }
 };
-for (const [slot, extra] of [["dark", {}], ["light", {}], ["compact-dark", { shape: "compact" }], ["compact-light", { shape: "compact" }]]) {
+const idleStates = { ...states, "sensor.lambdawp_hp1_operating_state": { ...states["sensor.lambdawp_hp1_operating_state"], state: "STBY", last_changed: new RealDate(2026, 8, 15, 13, 39, 46).toISOString() }, "switch.zirkulationspumpe": { ...states["switch.zirkulationspumpe"], state: "off" } };
+const idleHass = { ...hass, states: idleStates };
+for (const [slot, extra, h] of [["dark", {}, hass], ["compact-dark", { shape: "compact" }, hass], ["light", {}, idleHass], ["narrow", {}, hass]]) {
   const el = document.createElement("heat-origin-card");
   el.setConfig({ ...config, ...extra });
-  el.hass = hass;
+  el.hass = h;
   document.getElementById(slot).append(el);
 }
 `;
@@ -103,7 +113,8 @@ const page = `<!doctype html><meta charset="utf-8">
   ha-card { display: block; background: var(--ha-card-background); color: var(--primary-text-color); border-radius: 12px; }
 </style>
 <div class="col dark"><div id="dark"></div><div id="compact-dark"></div></div>
-<div class="col light"><div id="light"></div><div id="compact-light"></div></div>
+<div class="col light"><div id="light"></div></div>
+<div class="col dark" style="width:290px"><div id="narrow"></div></div>
 <script type="module">${bundle}</script>
 <script type="module">${harness}</script>`;
 

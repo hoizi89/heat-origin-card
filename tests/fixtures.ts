@@ -63,6 +63,9 @@ export const IDS = {
   volume_flow: "sensor.lambdawp_hp1_volume_flow_heat_sink",
   outdoor: "sensor.lambdawp_ambient_temperature",
   solar: "sensor.pv_power",
+  house_power: "sensor.house_consumption",
+  grid_power: "sensor.grid_power_inverted",
+  battery_power: "sensor.battery_power",
   heating_heat_today: "sensor.lambdawp_hp1_heating_thermal_energy_daily",
   heating_electric_today: "sensor.lambdawp_hp1_heating_energy_daily",
   hot_water_heat_today: "sensor.lambdawp_hp1_hot_water_thermal_energy_daily",
@@ -81,6 +84,10 @@ export function states(mode = "DHW"): Record<string, HassEntity> {
     entity(IDS.volume_flow, 1752, "l/h"),
     entity(IDS.outdoor, 20.2, "°C"),
     entity(IDS.solar, 8975, "W"),
+    entity(IDS.house_power, 2700, "W"),
+    entity(IDS.grid_power, -6300, "W"),
+    entity(IDS.battery_power, -40, "W"),
+    entity("switch.zirkulationspumpe", "on"),
     entity(IDS.heating_heat_today, 15.14, "kWh"),
     entity(IDS.heating_electric_today, 2.44, "kWh"),
     entity(IDS.hot_water_heat_today, 12.5, "kWh"),
@@ -137,6 +144,11 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       flow: "sensor.lambdawp_hc2_flow_line_temperature",
       return: "sensor.lambdawp_hc2_return_line_temperature",
       room: "sensor.lambdawp_hc2_room_device_temperature"
+    },
+    {
+      name: "Zirkulation",
+      pump: "switch.zirkulationspumpe",
+      temperature: "sensor.lambdawp_boil1_actual_circulation_temperature"
     }
   ],
   stores: [
@@ -144,13 +156,14 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       name: "Warmwasser",
       top: "sensor.lambdawp_boil1_actual_high_temperature",
       bottom: "sensor.lambdawp_boil1_actual_low_temperature",
-      circulation: "sensor.lambdawp_boil1_actual_circulation_temperature",
-      marks: { eco: 44.5, target: 48.5, pv: 57.5 }
+      marks: { eco: 44.5, target: 48.5, pv: 57.5 },
+      volume: 300
     },
     {
       name: "Puffer",
       top: "sensor.lambdawp_buff1_actual_high_temperature",
-      bottom: "sensor.lambdawp_buff1_actual_low_temperature"
+      bottom: "sensor.lambdawp_buff1_actual_low_temperature",
+      volume: 300
     }
   ],
   flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas" }] }

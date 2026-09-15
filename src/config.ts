@@ -33,7 +33,10 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     },
     entities: config.entities,
     modes: resolveModes(config.modes),
-    circuits: config.circuits ?? [],
+    circuits: (config.circuits ?? []).map((c) => ({
+      ...c,
+      kind: c.kind ?? (/zirkulation|circulation/i.test(c.name) ? "circulation" : "heating")
+    })),
     stores: (config.stores ?? []).map((s) => ({ ...s, kind: s.kind ?? guessKind(s.name) })),
     flow: {
       spread: config.flow?.spread ?? true,
@@ -42,8 +45,12 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     },
     day: {
       days,
-      short_run: config.day?.short_run ?? 120
-    }
+      short_run: config.day?.short_run ?? 120,
+      cycling_from: config.day?.cycling_from ?? 3
+    },
+    source: config.source === "ground" || config.source === "water" ? config.source : "air",
+    grid_invert: config.grid_invert ?? false,
+    battery_invert: config.battery_invert ?? false
   };
 }
 
@@ -54,6 +61,19 @@ export function getConfigForm(locale: string) {
   const t = (key: string) => localize(key, locale);
   const schema = [
     { name: "title", selector: { text: {} } },
+    {
+      name: "source",
+      selector: {
+        select: {
+          mode: "dropdown",
+          options: [
+            { value: "air", label: t("editor.source_air") },
+            { value: "ground", label: t("editor.source_ground") },
+            { value: "water", label: t("editor.source_water") }
+          ]
+        }
+      }
+    },
     {
       name: "shape",
       selector: {
@@ -85,7 +105,7 @@ export function getConfigForm(locale: string) {
         { name: "mode", required: true, selector: sensor },
         {
           type: "grid",
-          schema: ["heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "cop"].map((name) => ({
+          schema: ["heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop"].map((name) => ({
             name,
             selector: sensor
           }))
@@ -155,6 +175,10 @@ export function getConfigForm(locale: string) {
     volume_flow: t("editor.volume_flow"),
     outdoor: t("editor.outdoor"),
     solar: t("editor.solar"),
+    house_power: t("editor.house_power"),
+    grid_power: t("editor.grid_power"),
+    battery_power: t("editor.battery_power"),
+    source: t("editor.source"),
     cop: t("editor.cop"),
     heating_heat_today: t("editor.heating_heat_today"),
     heating_electric_today: t("editor.heating_electric_today"),

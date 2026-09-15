@@ -138,6 +138,22 @@ export function buildDay(
   return { start, end, segments, starts, minutes, shortRuns };
 }
 
+/** The last finished run, joined across mode changes, and what it mostly was. */
+export function lastRun(day: DayTimeline | undefined): { from: number; to: number; kind: Segment["kind"] } | undefined {
+  if (!day) return undefined;
+  const running = day.segments.filter((s) => s.kind !== "blocked");
+  const last = running.at(-1);
+  if (!last) return undefined;
+  let from = last.from;
+  let longest = last;
+  for (let i = running.length - 2; i >= 0; i -= 1) {
+    if (running[i].to !== from) break;
+    from = running[i].from;
+    if (running[i].to - running[i].from > longest.to - longest.from) longest = running[i];
+  }
+  return { from, to: last.to, kind: longest.kind };
+}
+
 /** Yesterday and today, or today alone. */
 export function buildDays(
   points: StatePoint[],
