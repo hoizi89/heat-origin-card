@@ -29,15 +29,15 @@ entities:
   volume_flow: sensor.lambdawp_hp1_volume_flow_heat_sink
   outdoor: sensor.lambdawp_ambient_temperature
   solar: sensor.pv_power
+  house_power: sensor.house_consumption   # optional: split the electricity by source
+  grid_power: sensor.grid_power           # + import
+  battery_power: sensor.battery_power     # + discharge
   heating_heat_today: sensor.lambdawp_hp1_heating_thermal_energy_daily
   heating_electric_today: sensor.lambdawp_hp1_heating_energy_daily
   hot_water_heat_today: sensor.lambdawp_hp1_hot_water_thermal_energy_daily
   hot_water_electric_today: sensor.lambdawp_hp1_hot_water_energy_daily
   cop_heating_year: sensor.lambdawp_hp1_heating_cop_yearly
   cop_hot_water_year: sensor.lambdawp_hp1_hot_water_cop_yearly
-house_power: sensor.house_consumption      # optional: split the electricity by source
-grid_power: sensor.grid_power                # + import
-battery_power: sensor.battery_power          # + discharge
 circuits:
   - name: Underfloor
     state: sensor.lambdawp_hc1_operating_state
@@ -52,7 +52,6 @@ stores:
   - name: Hot water
     top: sensor.lambdawp_boil1_actual_high_temperature
     bottom: sensor.lambdawp_boil1_actual_low_temperature
-    circulation: sensor.lambdawp_boil1_actual_circulation_temperature
     marks: { eco: 44.5, target: 48.5, pv: 57.5 }
     volume: 300
   - name: Buffer
