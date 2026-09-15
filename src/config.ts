@@ -55,6 +55,40 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   };
 }
 
+/**
+ * What the editor shows: the stored configuration with every switch and
+ * dropdown at the value the card really uses. A section left out of the YAML
+ * is on, so its toggle must read on, not off. Lists and state words stay as
+ * written; nothing the form does not show is filled in.
+ */
+export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
+  const resolved = resolveConfig(config);
+  return {
+    ...config,
+    font: resolved.font,
+    source: resolved.source,
+    shape: resolved.shape,
+    sections: {
+      ...config.sections,
+      flow: resolved.sections.flow,
+      day: resolved.sections.day,
+      origin: resolved.sections.origin,
+      stores: resolved.sections.stores
+    },
+    flow: {
+      ...config.flow,
+      spread: resolved.flow.spread,
+      circuit_details: resolved.flow.circuit_details
+    },
+    day: {
+      ...config.day,
+      days: resolved.day.days,
+      short_run: resolved.day.short_run,
+      cycling_from: resolved.day.cycling_from
+    }
+  };
+}
+
 const sensor = { entity: { domain: "sensor" } };
 
 /** The form the visual editor shows; lists (circuits, stores) stay in YAML. */
@@ -169,7 +203,8 @@ export function getConfigForm(locale: string) {
             }
           }
         },
-        { name: "short_run", selector: { number: { min: 0, max: 900, step: 10, mode: "box" } } }
+        { name: "short_run", selector: { number: { min: 0, max: 900, step: 10, mode: "box" } } },
+        { name: "cycling_from", selector: { number: { min: 0, max: 20, step: 1, mode: "box" } } }
       ]
     }
   ];
@@ -203,7 +238,8 @@ export function getConfigForm(locale: string) {
     spread: t("editor.spread"),
     circuit_details: t("editor.circuit_details"),
     days: t("editor.days"),
-    short_run: t("editor.short_run")
+    short_run: t("editor.short_run"),
+    cycling_from: t("editor.cycling_from")
   };
 
   return {

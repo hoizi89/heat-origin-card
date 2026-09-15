@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
-import { assertConfig, getConfigForm } from "./config";
+import { assertConfig, editorData, getConfigForm } from "./config";
 import type { HeatOriginCardConfig, HomeAssistant } from "./types";
 import { localeOf } from "./values";
 
@@ -47,7 +47,7 @@ export class HeatOriginCardEditor extends LitElement {
     return html`
       <ha-form
         .hass=${this.hass}
-        .data=${this._config}
+        .data=${editorData(this._config)}
         .schema=${form.schema}
         .computeLabel=${form.computeLabel}
         .computeHelper=${form.computeHelper}

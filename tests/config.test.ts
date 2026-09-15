@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertConfig, getConfigForm, resolveConfig } from "../src/config";
+import { assertConfig, editorData, getConfigForm, resolveConfig } from "../src/config";
 import { FULL_CONFIG } from "./fixtures";
 
 describe("configuration", () => {
@@ -25,6 +25,21 @@ describe("configuration", () => {
       sections: { order: ["origin", "nonsense" as never] }
     }).sections.order;
     expect(order).toEqual(["origin", "flow", "day", "stores"]);
+  });
+
+  it("shows the editor the values the card uses, not blanks for what the YAML leaves out", () => {
+    const data = editorData({ type: "t", entities: { mode: "sensor.x" }, stores: [{ name: "Warmwasser", top: "sensor.t" }] });
+    expect(data.sections).toMatchObject({ flow: true, day: true, origin: true, stores: true });
+    expect(data.font).toBe("system");
+    expect(data.source).toBe("air");
+    expect(data.shape).toBe("standard");
+    expect(data.flow).toMatchObject({ spread: true, circuit_details: false });
+    expect(data.day).toMatchObject({ days: 2, short_run: 120, cycling_from: 3 });
+    // A section switched off stays off, and lists stay as written.
+    const off = editorData({ type: "t", entities: { mode: "sensor.x" }, sections: { day: false }, flow: { extras: [{ entity: "sensor.y" }] } });
+    expect(off.sections?.day).toBe(false);
+    expect(off.flow?.extras).toEqual([{ entity: "sensor.y" }]);
+    expect((off as Record<string, unknown>).modes).toBeUndefined();
   });
 
   it("labels the flow sensor and the flow section apart", () => {
