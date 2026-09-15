@@ -385,7 +385,7 @@ export const cardStyles = css`
     flex-basis: 100%;
   }
 
-  /* Storage: the number first, the tank as its layering, the usable heat as cells. */
+  /* Storage: the number first; the tank a level gauge of one height for every store. */
   .store {
     display: grid;
     grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -401,19 +401,46 @@ export const cardStyles = css`
 
   .tank {
     grid-row: 1 / span 2;
-    align-self: stretch;
-    min-height: 74px;
-    border-radius: 11px;
+    align-self: start;
+    height: 84px;
+    border-radius: 10px;
     border: 1.5px solid var(--ho-hairline);
+    background: var(--ho-track);
     position: relative;
     overflow: hidden;
   }
 
-  .tank .probe {
+  .tank .fill {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 1.5px solid rgba(255, 255, 255, 0.8);
+    bottom: 0;
+  }
+
+  /* Marks as notches on both walls, readable over the filling and the empty part alike. */
+  .tank .tick {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+  }
+
+  .tank .tick::before,
+  .tank .tick::after {
+    content: "";
+    position: absolute;
+    top: -0.75px;
+    width: 6px;
+    border-top: 1.5px solid var(--ho-ink);
+    opacity: 0.5;
+  }
+
+  .tank .tick::before {
+    left: 0;
+  }
+
+  .tank .tick::after {
+    right: 0;
   }
 
   .store-info {
@@ -481,19 +508,7 @@ export const cardStyles = css`
     margin-left: 2px;
   }
 
-  .cells {
-    display: grid;
-    grid-template-columns: repeat(10, 8px);
-    gap: 2px;
-    height: 14px;
-  }
-
-  .cells span {
-    border-radius: 2px;
-    background: var(--ho-track);
-  }
-
-  .store-pct {
+  .store-above {
     font-family: var(--ho-mono);
     font-size: 10.5px;
     color: var(--ho-muted);

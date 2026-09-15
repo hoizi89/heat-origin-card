@@ -997,21 +997,24 @@ export class HeatOriginCard extends LitElement {
       const mean = top !== undefined && bottom !== undefined ? (top + bottom) / 2 : top;
       const floor = store.usable_min ?? (store.kind === "hot_water" ? 40 : 30);
       const ceiling = store.marks?.pv ?? store.marks?.max ?? store.marks?.target ?? 60;
+      // The tank is a level gauge: empty at the usable minimum, full at the highest mark.
+      const span = ceiling - floor;
+      const level = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - floor) / span)) : 0);
+      const pct = mean !== undefined ? level(mean) : undefined;
       let energy: TemplateResult | typeof nothing = nothing;
       if (store.volume && mean !== undefined) {
         anyVolume = true;
         const usable = Math.max(0, (store.volume * 1.163 * (mean - floor)) / 1000);
         totalUsable += usable;
-        const pct = ceiling > floor ? Math.min(1, Math.max(0, (mean - floor) / (ceiling - floor))) : 0;
-        const filled = Math.round(pct * 10);
         energy = html`<div class="store-energy">
           <span class="store-kwh">${this._one(usable)}<small>kWh</small></span>
-          <span class="cells" role="img" aria-label="${formatNumber(pct * 100, locale, 0)} %">
-            ${Array.from({ length: 10 }, (_, i) => html`<span style=${i < filled ? `background:${tone}` : ""}></span>`)}
-          </span>
-          <span class="store-pct">${formatNumber(pct * 100, locale, 0)} % · ${this._t("stores.usable")}</span>
+          <span class="store-above">${this._t("stores.above", { t: formatNumber(floor, locale, floor % 1 ? 1 : 0) })}</span>
         </div>`;
       }
+      const ticks = (["eco", "target", "pv", "max"] as const)
+        .map((k) => store.marks?.[k])
+        .filter((v): v is number => v !== undefined && v > floor && v < ceiling)
+        .map((v) => html`<span class="tick" style="bottom:${(level(v) * 100).toFixed(1)}%"></span>`);
       const layering = top !== undefined && bottom !== undefined ? top - bottom : undefined;
       const sub =
         bottom !== undefined
@@ -1036,10 +1039,11 @@ export class HeatOriginCard extends LitElement {
         });
 
       return html`<div class="store" @click=${() => this._moreInfo(store.top)}>
-        <div class="tank" role="img" aria-label="${store.name}"
-          style="background: linear-gradient(to top, ${ramp(bottom ?? top ?? 25, tone)}, ${ramp(top ?? 25, tone)})">
-          ${top !== undefined ? html`<span class="probe" style="top: 20%"></span>` : nothing}
-          ${bottom !== undefined ? html`<span class="probe" style="top: 80%"></span>` : nothing}
+        <div class="tank" role="img" aria-label="${store.name}${pct !== undefined ? `: ${formatNumber(pct * 100, locale, 0)} %` : ""}">
+          ${pct !== undefined
+            ? html`<span class="fill" style="height:${(pct * 100).toFixed(1)}%; background: linear-gradient(to top, ${ramp(bottom ?? top ?? 25, tone)}, ${ramp(top ?? 25, tone)})"></span>`
+            : nothing}
+          ${ticks}
         </div>
         <div class="store-info">
           <span class="store-name">${store.name}</span>

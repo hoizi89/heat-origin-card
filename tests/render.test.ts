@@ -189,8 +189,13 @@ describe("storage", () => {
     const { root } = await mount(FULL_CONFIG);
     const stores = [...root.querySelectorAll(".store")].map((s) => text(s));
     expect(stores[0]).toContain("Warmwasser 57,6 °C lädt unten 57,6 · gleichmäßig");
-    expect(stores[0]).toContain("6,1 kWh");
-    expect(stores[0]).toContain("100 %");
+    expect(stores[0]).toContain("6,1 kWh über 40 °C");
+    expect(stores[0]).not.toContain("%");
+    expect(stores[1]).toContain("über 30 °C");
+    // Every tank has the same height; its filling runs from the usable minimum to the highest mark.
+    const fills = [...root.querySelectorAll(".tank .fill")].map((f) => (f as HTMLElement).style.height);
+    expect(fills).toEqual(["100%", "78.2%"]);
+    expect(root.querySelectorAll(".tank .tick").length).toBe(2);
     expect(stores[0]).toContain("PV 57,5");
     expect(stores[1]).toContain("unten 51,7 · Δ 3,5 K");
     expect(stores[1]).toContain("8,2 kWh");
