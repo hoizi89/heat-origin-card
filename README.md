@@ -75,6 +75,7 @@ flow:
 | `source` | `air` | `ground` or `water`: named in "ambient heat from …". |
 | `entities.house_power`, `grid_power`, `battery_power` | | Split the electricity by source; `grid_invert`, `battery_invert` flip the signs. Without them, PV at or above the draw counts as PV. |
 | `shape` | `standard` | `compact` is one row. |
+| `font` | `system` | Figures in the dashboard font with equal-width digits; `mono` for monospace. |
 | `sections.flow` / `day` / `origin` / `stores` | on, stores only with stores | `sections.order` sets the order. |
 | `entities.cop` | | A live COP sensor; otherwise heat divided by electricity. |
 | `entities.heat_today`, `electric_today` | | Totals, for heat pumps that do not split by mode. |
@@ -89,7 +90,7 @@ flow:
 | `stores[].marks` | | `eco`, `target`, `pv`, `max` as numbers. |
 | `flow.spread` | `true` | Flow, return, spread and volume under the drawing. |
 | `flow.circuit_details` | `false` | Flow, return and spread inside each circuit. |
-| `flow.extras` | | Further figures, `{ entity, name }`. |
+| `flow.extras` | | Further figures, `{ entity, name, running_only }`; `running_only` hides a figure at rest, e.g. hot gas. |
 | `day.days` | `2` | `1` shows today only. |
 | `day.short_run` | `120` | Seconds; shorter runs are flagged. `0` turns it off. |
 | `day.cycling_from` | `3` | Short runs in a day from which a notice appears. |
