@@ -24,7 +24,13 @@ export const cardStyles = css`
     display: block;
   }
 
+  /* The dashboard's own face for everything; digits keep equal widths so values do not jump. */
+  ha-card.font-system {
+    --ho-mono: var(--ha-font-family-body, var(--primary-font-family, Roboto, "Segoe UI", sans-serif));
+  }
+
   ha-card {
+    font-variant-numeric: tabular-nums;
     color: var(--ho-ink);
     position: relative;
     container-type: inline-size;
@@ -92,7 +98,7 @@ export const cardStyles = css`
     align-items: baseline;
     gap: 10px;
     font-family: var(--ho-mono);
-    font-size: 10px;
+    font-size: 10.5px;
     letter-spacing: 0.12em;
     color: var(--ho-muted);
   }
@@ -117,6 +123,7 @@ export const cardStyles = css`
 
   svg text {
     font-family: var(--ha-font-family-body, var(--primary-font-family, sans-serif));
+    font-variant-numeric: tabular-nums;
   }
 
   svg .mono {
@@ -151,7 +158,7 @@ export const cardStyles = css`
     flex-wrap: wrap;
     gap: 4px 14px;
     font-family: var(--ho-mono);
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--ho-muted);
     font-variant-numeric: tabular-nums;
   }
@@ -210,8 +217,8 @@ export const cardStyles = css`
 
   .stat-k {
     font-family: var(--ho-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.1em;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--ho-muted);
     white-space: nowrap;
@@ -399,7 +406,7 @@ export const cardStyles = css`
 
   .words .sub {
     font-family: var(--ho-mono);
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--ho-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -430,7 +437,7 @@ export const cardStyles = css`
     grid-template-columns: auto 1fr 1fr;
     gap: 3px 12px;
     font-family: var(--ho-mono);
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--ho-muted);
     padding-top: 8px;
     border-top: 1px solid var(--ho-hairline);
@@ -529,7 +536,7 @@ export const cardStyles = css`
   }
 
   .store-kwh small {
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 500;
     color: var(--ho-muted);
     margin-left: 2px;
@@ -549,7 +556,7 @@ export const cardStyles = css`
 
   .store-pct {
     font-family: var(--ho-mono);
-    font-size: 10px;
+    font-size: 10.5px;
     color: var(--ho-muted);
   }
 
@@ -562,7 +569,7 @@ export const cardStyles = css`
 
   .mark {
     font-family: var(--ho-mono);
-    font-size: 10px;
+    font-size: 10.5px;
     padding: 2px 7px;
     border-radius: 999px;
     border: 1px solid var(--ho-hairline);
@@ -602,7 +609,7 @@ export const cardStyles = css`
 
   .sink .v {
     font-family: var(--ho-mono);
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--ho-muted);
     white-space: nowrap;
     overflow: hidden;

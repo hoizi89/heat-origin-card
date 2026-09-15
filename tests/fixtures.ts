@@ -166,5 +166,5 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       volume: 300
     }
   ],
-  flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas" }] }
+  flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas", running_only: true }] }
 };

@@ -111,6 +111,8 @@ export interface StoreConfig {
 export interface ExtraFigure {
   entity: string;
   name?: string;
+  /** Only while the heat pump runs, for figures that mean nothing at rest (hot gas, compressor speed). */
+  running_only?: boolean;
 }
 
 export interface FlowOptions {
@@ -153,6 +155,8 @@ export interface HeatOriginCardConfig {
   source?: HeatSource;
   grid_invert?: boolean;
   battery_invert?: boolean;
+  /** Figures in the dashboard's own face (default) or in monospace. */
+  font?: "system" | "mono";
 }
 
 export interface ResolvedConfig {
@@ -169,6 +173,7 @@ export interface ResolvedConfig {
   source: HeatSource;
   grid_invert: boolean;
   battery_invert: boolean;
+  font: "system" | "mono";
 }
 
 declare global {

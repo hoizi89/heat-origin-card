@@ -350,7 +350,7 @@ export class HeatOriginCard extends LitElement {
     };
 
     return html`
-      <ha-card>
+      <ha-card class=${config.font === "system" ? "font-system" : ""}>
         ${this._renderHead()}
         ${config.sections.order.filter((s) => config.sections[s]).map((s) => blocks[s]())}
         ${this._tip ? html`<div class="tip" style="left:${this._tip.x}px;top:${this._tip.y}px">${this._tip.text}</div>` : nothing}
@@ -360,9 +360,12 @@ export class HeatOriginCard extends LitElement {
 
   private _chip() {
     const mode = this._mode();
+    // At rest the moment that matters is when the last run ended, not when a block turned into standby.
+    const last = isRunning(mode.kind) ? undefined : lastRun(this._days()?.at(-1));
+    const sinceAt = last && mode.since !== undefined && last.to <= mode.since ? last.to : mode.since;
     const since =
-      mode.since !== undefined && Date.now() - mode.since < DAY
-        ? ` · ${this._t("flow.since", { time: clock(new Date(mode.since), this._locale) })}`
+      sinceAt !== undefined && Date.now() - sinceAt < DAY
+        ? ` · ${this._t("flow.since", { time: clock(new Date(sinceAt), this._locale) })}`
         : "";
     return html`<span class="chip" style="--tone:${TONE[mode.kind]}" @click=${() => this._moreInfo(this._config?.entities.mode)}
       ><i></i>${this._modeLabel(mode.kind, mode.raw)}${since}</span
@@ -394,7 +397,7 @@ export class HeatOriginCard extends LitElement {
       sinks.push({
         name: store.name,
         value: `${top ?? "–"} °C`,
-        detail: details && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
+        detail: details && fed && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
         active: fed,
         fed,
         tone: STORE_TONE[store.kind],
@@ -425,7 +428,7 @@ export class HeatOriginCard extends LitElement {
       }
       const cooling = raw ? /cool|kühl|cc-/i.test(raw) : false;
       const spread =
-        details && flow !== undefined && ret !== undefined
+        details && active && flow !== undefined && ret !== undefined
           ? `${formatTemp(flow, locale)}/${formatTemp(ret, locale)} · Δ ${this._one(flow - ret)} K`
           : undefined;
       sinks.push({
@@ -468,6 +471,7 @@ export class HeatOriginCard extends LitElement {
       }
     }
     for (const extra of config.flow.extras) {
+      if (extra.running_only && !running) continue;
       const entity = stateOf(this.hass, extra.entity);
       if (!entity) continue;
       const n = numberOf(entity);
@@ -531,13 +535,13 @@ export class HeatOriginCard extends LitElement {
       running
         ? svg`
           <text x=${cx} y=${cy} text-anchor="middle" font-size=${big} font-weight="700" fill="var(--ho-ink)">${formatNumber(heat, locale, 1)}</text>
-          <text x=${cx} y=${cy + 13} text-anchor="middle" font-size="9" fill="var(--ho-muted)" class="mono">${this._t("flow.heat")}</text>
+          <text x=${cx} y=${cy + 13} text-anchor="middle" font-size="10" fill="var(--ho-muted)" class="mono">${this._t("flow.heat")}</text>
           ${live.cop !== undefined
             ? svg`<text x=${cx} y=${cy + r - 11} text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ho-ink)" class="mono">COP ${formatNumber(live.cop, locale, 1)}</text>`
             : nothing}`
         : last
           ? svg`
-            <text x=${cx} y=${cy - 14} text-anchor="middle" font-size="9" fill="var(--ho-muted)" class="mono">${this._t("flow.last")}</text>
+            <text x=${cx} y=${cy - 14} text-anchor="middle" font-size="10" fill="var(--ho-muted)" class="mono">${this._t("flow.last")}</text>
             <text x=${cx} y=${cy + 5} text-anchor="middle" font-size=${big - 7} font-weight="700" fill="var(--ho-ink)">${this._spanText((last.to - last.from) / 60000)}</text>
             <text x=${cx} y=${cy + 20} text-anchor="middle" font-size="10" font-weight="600" fill=${TONE[last.kind]}>${this._t(`kind.${last.kind}`)}</text>`
           : svg`<text x=${cx} y=${cy + 4} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ho-muted)">${this._modeLabel(mode.kind, mode.raw)}</text>`;
@@ -561,7 +565,7 @@ export class HeatOriginCard extends LitElement {
                   <circle cx="24" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? powerTone : "var(--ho-hairline)"} stroke-width="2"/>
                   ${powerGlyph(24, cy)}
                   <text x="24" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(electric, locale) : "–"}</text>
-                  <text x="24" y=${cy + 45} text-anchor="middle" font-size="9.5" fill="var(--ho-muted)">${running ? this._sourceLabel(shares) : this._t("flow.power")}</text>
+                  <text x="24" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._sourceLabel(shares) : this._t("flow.power")}</text>
                 </g>`
               : nothing}
             ${hasBoth
@@ -570,7 +574,7 @@ export class HeatOriginCard extends LitElement {
                   <circle cx="224" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
                   ${airGlyph(224, cy)}
                   <text x="224" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(air, locale) : outdoor !== undefined ? `${outdoor}°` : "–"}</text>
-                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="9.5" fill="var(--ho-muted)">${running ? this._t("flow.air") : this._t("flow.outside")}</text>
+                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._t("flow.air") : this._t("flow.outside")}</text>
                 </g>`
               : nothing}
             <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
@@ -593,8 +597,7 @@ export class HeatOriginCard extends LitElement {
       `;
     }
 
-    const details = config.flow.circuit_details;
-    const rowH = details ? 46 : 36;
+    const rowH = sinks.some((s) => s.detail) ? 46 : 36;
     const gap = 8;
     const stack = sinks.length ? sinks.length * rowH + (sinks.length - 1) * gap : 0;
     const H = Math.max(200, stack + 8);
@@ -604,8 +607,9 @@ export class HeatOriginCard extends LitElement {
     const sinkX = 238;
     const sinkW = W - sinkX;
     const y0 = cy - stack / 2;
-    const powerY = cy - 54;
-    const airY = cy + 54;
+    const spreadY = Math.min(62, Math.max(50, H * 0.26));
+    const powerY = cy - spreadY;
+    const airY = cy + spreadY;
 
     const inputs: TemplateResult[] = [];
     if (config.entities.electric_power) {
@@ -649,7 +653,7 @@ export class HeatOriginCard extends LitElement {
           <text x=${sinkX + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${sink.name}</text>
           <text x=${sinkX + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
           ${sink.right ? svg`<text x=${W - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
-          ${sink.detail ? svg`<text x=${sinkX + 9} y=${y + 41} font-size="9.5" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
+          ${sink.detail ? svg`<text x=${sinkX + 9} y=${y + 41} font-size="10" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
         </g>
       `;
     });
@@ -1051,7 +1055,7 @@ export class HeatOriginCard extends LitElement {
     const x = (t: number) => (today ? ((t - today.start) / DAY) * W : 0);
 
     return html`
-      <ha-card class="compact" style="--tone:${TONE[mode.kind]}">
+      <ha-card class="compact ${config.font === "system" ? "font-system" : ""}" style="--tone:${TONE[mode.kind]}">
         <span class="glyph" aria-hidden="true">${this._glyph(mode.kind)}</span>
         <span class="words" @click=${() => this._moreInfo(config.entities.mode)}>
           <span class="state">${this._modeLabel(mode.kind, mode.raw)}</span>

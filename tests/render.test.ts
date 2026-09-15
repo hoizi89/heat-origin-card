@@ -70,7 +70,8 @@ describe("the flow", () => {
     expect(t).toContain("6,6");
     expect(t).toContain("COP 3,8");
     expect(t).toContain("Sommer");
-    expect(t).toContain("25,8/24,7 · Δ 1,1 K");
+    // A circuit in summer mode moves no water; its spread would be a number without meaning.
+    expect(t).not.toContain("25,8/24,7");
     expect(t).toContain("24,5°");
     expect(t).toContain("34,3 °C · läuft");
     // Only the hot water is fed by the heat pump; the circulation runs on its own.
@@ -85,6 +86,14 @@ describe("the flow", () => {
     expect(foot).toContain("Heißgas 87,5 °C");
   });
 
+  it("shows a heating circuit's flow, return and spread while it takes heat", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} }
+    });
+    const { root } = await mount(FULL_CONFIG, hass);
+    expect(text(root)).toContain("25,8/24,7 · Δ 1,1 K");
+  });
+
   it("leaves the spread out when asked", async () => {
     const { root } = await mount({ ...FULL_CONFIG, flow: { spread: false } });
     expect(text(root)).not.toContain("Spreizung");
@@ -94,11 +103,15 @@ describe("the flow", () => {
   it("tells the last run while standing still instead of zeros", async () => {
     const { root } = await mount(FULL_CONFIG, idle());
     const t = text(root);
-    expect(root.querySelector(".chip")?.textContent).toContain("Bereit");
+    // Standby since the run ended at 13:39, even if a block turned into standby later.
+    expect(root.querySelector(".chip")?.textContent?.replace(/\s+/g, " ")).toContain("Bereit · seit 13:39");
     expect(t).toContain("zuletzt");
     expect(t).toContain("40 min");
     expect(t).toContain("Heute 3 Starts");
     expect(t).not.toContain("0,00 kW");
+    // Hot gas means nothing with the compressor at rest; the store's bottom lives in the storage section.
+    expect(text(root.querySelector(".section .foot") as Element)).not.toContain("Heißgas");
+    expect(text(root.querySelector(".section svg") as Element)).not.toContain("unten");
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(0);
   });
 });
@@ -109,7 +122,7 @@ describe("the day band", () => {
     expect((hass as ReturnType<typeof makeHass>).calls).toContain("history/history_during_period");
     expect(root.querySelectorAll("rect.seg").length).toBeGreaterThan(8);
     const stats = text(root.querySelector(".stats") as Element);
-    expect(stats).toContain("Starts heute 3");
+    expect(stats).toContain("Starts 3");
     expect(stats).toContain("Kurzläufe 0 Gestern 1");
     expect(stats).toContain("Warmwasser 1:59");
     expect(stats).toContain("Heizen 2:16");
@@ -173,7 +186,7 @@ describe("general", () => {
   it("shows only the chosen sections", async () => {
     const { root } = await mount({ ...FULL_CONFIG, sections: { flow: false, day: false, stores: false } });
     expect(root.querySelector(".flow-dash")).toBeNull();
-    expect(text(root)).not.toContain("Starts heute");
+    expect(text(root)).not.toContain("Kurzläufe");
     expect(text(root)).toContain("Umweltwärme");
   });
 

@@ -50,7 +50,8 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     },
     source: config.source === "ground" || config.source === "water" ? config.source : "air",
     grid_invert: config.grid_invert ?? false,
-    battery_invert: config.battery_invert ?? false
+    battery_invert: config.battery_invert ?? false,
+    font: config.font === "mono" ? "mono" : "system"
   };
 }
 
@@ -61,6 +62,18 @@ export function getConfigForm(locale: string) {
   const t = (key: string) => localize(key, locale);
   const schema = [
     { name: "title", selector: { text: {} } },
+    {
+      name: "font",
+      selector: {
+        select: {
+          mode: "dropdown",
+          options: [
+            { value: "system", label: t("editor.font_system") },
+            { value: "mono", label: t("editor.font_mono") }
+          ]
+        }
+      }
+    },
     {
       name: "source",
       selector: {
@@ -179,6 +192,7 @@ export function getConfigForm(locale: string) {
     grid_power: t("editor.grid_power"),
     battery_power: t("editor.battery_power"),
     source: t("editor.source"),
+    font: t("editor.font"),
     cop: t("editor.cop"),
     heating_heat_today: t("editor.heating_heat_today"),
     heating_electric_today: t("editor.heating_electric_today"),
