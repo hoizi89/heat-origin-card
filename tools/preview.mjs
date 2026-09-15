@@ -36,6 +36,8 @@ const states = Object.fromEntries([
   e("sensor.lambdawp_hp1_heating_energy_daily", 2.44, "kWh"),
   e("sensor.lambdawp_hp1_hot_water_thermal_energy_daily", 12.5, "kWh"),
   e("sensor.lambdawp_hp1_hot_water_energy_daily", 3.05, "kWh"),
+  e("sensor.lambdawp_hp1_heating_cop_monthly", 6.0),
+  e("sensor.lambdawp_hp1_hot_water_cop_monthly", 5.1),
   e("sensor.lambdawp_hp1_heating_cop_yearly", 6.0),
   e("sensor.lambdawp_hp1_hot_water_cop_yearly", 4.42),
   e("sensor.lambdawp_boil1_actual_high_temperature", 57.6, "°C"),
@@ -80,6 +82,8 @@ const config = {
     heating_electric_today: "sensor.lambdawp_hp1_heating_energy_daily",
     hot_water_heat_today: "sensor.lambdawp_hp1_hot_water_thermal_energy_daily",
     hot_water_electric_today: "sensor.lambdawp_hp1_hot_water_energy_daily",
+    cop_heating_month: "sensor.lambdawp_hp1_heating_cop_monthly",
+    cop_hot_water_month: "sensor.lambdawp_hp1_hot_water_cop_monthly",
     cop_heating_year: "sensor.lambdawp_hp1_heating_cop_yearly",
     cop_hot_water_year: "sensor.lambdawp_hp1_hot_water_cop_yearly"
   },

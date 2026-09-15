@@ -22,14 +22,14 @@ describe("configuration", () => {
     const order = resolveConfig({
       type: "t",
       entities: { mode: "sensor.x" },
-      sections: { order: ["origin", "nonsense" as never] }
+      sections: { order: ["stores", "nonsense" as never] }
     }).sections.order;
-    expect(order).toEqual(["origin", "flow", "day", "stores"]);
+    expect(order).toEqual(["stores", "flow", "day"]);
   });
 
   it("shows the editor the values the card uses, not blanks for what the YAML leaves out", () => {
     const data = editorData({ type: "t", entities: { mode: "sensor.x" }, stores: [{ name: "Warmwasser", top: "sensor.t" }] });
-    expect(data.sections).toMatchObject({ flow: true, day: true, origin: true, stores: true });
+    expect(data.sections).toMatchObject({ flow: true, day: true, stores: true });
     expect(data.font).toBe("system");
     expect(data.source).toBe("air");
     expect(data.shape).toBe("standard");

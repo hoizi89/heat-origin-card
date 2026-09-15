@@ -159,20 +159,28 @@ describe("the day band", () => {
   });
 });
 
-describe("heat today", () => {
-  it("speaks of ambient heat and performance factors", async () => {
+describe("performance factors", () => {
+  it("stand under the running times, today against the month, with an arrow where they part", async () => {
     const { root } = await mount(FULL_CONFIG);
-    const t = text(root);
-    expect(t).toContain("80 % Umweltwärme aus der Luft");
-    expect(t).toContain("AZ 6,2");
-    expect(t).toContain("JAZ 6,0");
-    expect(t).toContain("27,6 kWh");
-    expect(t).not.toContain("KWH");
+    const stats = [...root.querySelectorAll(".stat")].map((s) => text(s));
+    expect(stats.find((s) => s.startsWith("Heizen"))).toContain("AZ 6,2 Monat 6,0");
+    expect(stats.find((s) => s.startsWith("Warmwasser"))).toContain("AZ 4,1 ▼ Monat 5,1");
+    expect(text(root)).not.toContain("Umweltwärme");
+    expect(text(root)).not.toContain("KWH");
+  });
+
+  it("falls back to the year where no month is given", async () => {
+    const { cop_heating_month, cop_hot_water_month, ...entities } = FULL_CONFIG.entities;
+    const { root } = await mount({ ...FULL_CONFIG, entities });
+    expect(text(root.querySelector(".stats") as Element)).toContain("AZ 4,1 Jahr 4,4");
   });
 
   it("names the ground for a ground source heat pump", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, source: "ground" });
-    expect(text(root)).toContain("Umweltwärme aus dem Erdreich");
+    const hass = makeHass({
+      [IDS.mode]: { entity_id: IDS.mode, state: "CH", attributes: {} }
+    });
+    const { root } = await mount({ ...FULL_CONFIG, source: "ground", entities: { ...FULL_CONFIG.entities, outdoor: undefined } }, hass);
+    expect(text(root.querySelector(".section svg") as Element)).toContain("Erdreich");
   });
 });
 
@@ -220,10 +228,10 @@ describe("storage", () => {
 
 describe("general", () => {
   it("shows only the chosen sections", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, sections: { flow: false, day: false, stores: false } });
+    const { root } = await mount({ ...FULL_CONFIG, sections: { flow: false, stores: false } });
     expect(root.querySelector(".flow-dash")).toBeNull();
-    expect(text(root)).not.toContain("Kurzläufe");
-    expect(text(root)).toContain("Umweltwärme");
+    expect(root.querySelector(".store")).toBeNull();
+    expect(text(root)).toContain("Kurzläufe");
   });
 
   it("warns plainly when the state sensor does not exist", async () => {
@@ -234,7 +242,7 @@ describe("general", () => {
   it("speaks English where the dashboard does", async () => {
     const { root } = await mount(FULL_CONFIG, makeHass({}, "en"));
     expect(root.querySelector(".chip")?.textContent).toContain("Hot water");
-    expect(text(root)).toContain("ambient heat from the air");
+    expect(text(root)).toContain("Short runs");
   });
 
   it("the compact form is one row: the state, the hot water temperature and today's thread", async () => {

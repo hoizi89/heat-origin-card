@@ -236,6 +236,30 @@ export const cardStyles = css`
     white-space: nowrap;
   }
 
+  .stat-sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 6px;
+    margin-top: 1px;
+    font-family: var(--ho-mono);
+    font-size: 10.5px;
+    color: var(--ho-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-sub b {
+    color: var(--ho-ink);
+    font-weight: 600;
+  }
+
+  .stat-sub i {
+    font-style: normal;
+    font-size: 8px;
+    margin-left: 2px;
+    vertical-align: 1px;
+    color: var(--ho-ink);
+  }
+
   .stat.warn .stat-v {
     color: var(--ho-warn);
   }
@@ -294,77 +318,6 @@ export const cardStyles = css`
   .loading {
     font-size: 12px;
     color: var(--ho-muted);
-  }
-
-  .origin-big {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .origin-big .n {
-    font-size: 32px;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .origin-big .s {
-    color: var(--ho-muted);
-    font-size: 13px;
-  }
-
-  .origin-row {
-    display: grid;
-    gap: 5px;
-  }
-
-  .origin-line {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 10px;
-    font-size: 13px;
-  }
-
-  .origin-line .name {
-    font-weight: 500;
-  }
-
-  .origin-line .mono,
-  .origin-sub {
-    font-family: var(--ho-mono);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .origin-line .dim,
-  .origin-sub {
-    color: var(--ho-muted);
-    font-size: 11.5px;
-  }
-
-  .bar {
-    display: flex;
-    gap: 2px;
-    height: 12px;
-  }
-
-  .bar span {
-    height: 100%;
-  }
-
-  .bar span:first-child {
-    border-radius: 4px 0 0 4px;
-  }
-
-  .bar span:last-child {
-    border-radius: 0 4px 4px 0;
-  }
-
-  .bar span:only-child {
-    border-radius: 4px;
   }
 
   /* One row: the state, the figure that matters in it, and today as a thread. */
@@ -430,23 +383,6 @@ export const cardStyles = css`
 
   .strip {
     flex-basis: 100%;
-  }
-
-  .year {
-    display: grid;
-    grid-template-columns: auto 1fr 1fr;
-    gap: 3px 12px;
-    font-family: var(--ho-mono);
-    font-size: 11.5px;
-    color: var(--ho-muted);
-    padding-top: 8px;
-    border-top: 1px solid var(--ho-hairline);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .year b {
-    color: var(--ho-ink);
-    font-weight: 500;
   }
 
   /* Storage: the number first, the tank as its layering, the usable heat as cells. */

@@ -3,7 +3,7 @@ import { resolveModes } from "./modes";
 import type { HeatOriginCardConfig, ResolvedConfig, SectionName, StoreKind } from "./types";
 
 export const CARD_TYPE = "heat-origin-card";
-export const SECTIONS: SectionName[] = ["flow", "day", "origin", "stores"];
+export const SECTIONS: SectionName[] = ["flow", "day", "stores"];
 
 export function assertConfig(config: HeatOriginCardConfig | undefined, locale?: string): void {
   if (!config?.entities?.mode) {
@@ -49,7 +49,6 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     sections: {
       flow: sections.flow ?? true,
       day: sections.day ?? true,
-      origin: sections.origin ?? true,
       stores: sections.stores ?? Boolean(config.stores?.length),
       order: [...chosen, ...SECTIONS.filter((s) => !chosen.includes(s))]
     },
@@ -91,7 +90,6 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
       ...config.sections,
       flow: resolved.sections.flow,
       day: resolved.sections.day,
-      origin: resolved.sections.origin,
       stores: resolved.sections.stores
     },
     flow: {
@@ -246,7 +244,6 @@ export function getConfigForm(locale: string) {
     shape: t("editor.shape"),
     flow: t("editor.section_flow"),
     day: t("editor.section_day"),
-    origin: t("editor.section_origin"),
     stores: t("editor.section_stores"),
     mode: t("editor.mode"),
     heat_power: t("editor.heat_power"),

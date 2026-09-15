@@ -16,7 +16,7 @@ export interface HomeAssistant {
 /** The four things a heat pump does, plus the two ways it does nothing. */
 export type ModeKind = "heating" | "hot_water" | "cooling" | "defrost" | "blocked" | "idle";
 
-export type SectionName = "flow" | "day" | "origin" | "stores";
+export type SectionName = "flow" | "day" | "stores";
 export type CardShape = "standard" | "compact";
 export type StoreKind = "hot_water" | "buffer";
 export type CircuitKind = "heating" | "circulation";
@@ -144,7 +144,6 @@ export interface DayOptions {
 export interface SectionToggles {
   flow?: boolean;
   day?: boolean;
-  origin?: boolean;
   stores?: boolean;
   order?: SectionName[];
 }

@@ -3,8 +3,7 @@
 A heat pump card for Home Assistant. Where the heat comes from, where it goes, and how the day went. The sister card to [Power Origin](https://github.com/hoizi89/power-origin-card).
 
 - **Heat flow** — the heat pump in the middle, the stores on its left and the heating circuits on its right; electricity and ambient heat stand as one line each above and below it. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread. A running circulation pump puts a small loop mark on the hot water. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
-- **Day band** — yesterday and today as 24-hour bands coloured by what the heat pump did, with PV power above. Starts, short runs and running time are counted from the history; hover a short-run marker for its time. A notice appears only when the heat pump cycles.
-- **Heat today** — the day's heat per mode, split into electricity and ambient heat, with the performance factor of the day and month and the seasonal performance factor of the year.
+- **Day band** — yesterday and today as 24-hour bands coloured by what the heat pump did, with PV power above. Starts, short runs and running time are counted from the history; hover a short-run marker for its time. Under the running times of heating and hot water stands the day's performance factor next to the month's, with a small arrow where they part by half a point or more. A notice appears only when the heat pump cycles.
 - **Storage** — each store's temperature first, the tank drawn as its layering between the sensors, the set-points you enter as marks, and with the volume the usable heat in kWh.
 - **Compact** — one row: the state, the temperature that matters in it, and today as a thin band.
 
@@ -70,14 +69,15 @@ flow:
 | Option | Default | |
 |---|---|---|
 | `title` | Heating | |
-| `source` | `air` | `ground` or `water`: named in "ambient heat from …". |
+| `source` | `air` | `ground` or `water`: names the ambient heat in the flow. |
 | `entities.house_power`, `grid_power`, `battery_power` | | Split the electricity by source; `grid_invert`, `battery_invert` flip the signs. Without them, PV at or above the draw counts as PV. |
 | `shape` | `standard` | `compact` is one row. |
 | `font` | `system` | Figures in the dashboard font with equal-width digits; `mono` for monospace. |
-| `sections.flow` / `day` / `origin` / `stores` | on, stores only with stores | `sections.order` sets the order. |
+| `sections.flow` / `day` / `stores` | on, stores only with stores | `sections.order` sets the order. |
 | `entities.cop` | | A live COP sensor; otherwise heat divided by electricity. |
-| `entities.heat_today`, `electric_today` | | Totals, for heat pumps that do not split by mode. |
-| `entities.cop_heating_month` … `cop_hot_water_year` | | Shown under the day's heat. |
+| `entities.heating_heat_today` … `hot_water_electric_today` | | The day's heat and electricity per mode, for today's performance factor. |
+| `entities.heat_today`, `electric_today` | | Totals, for heat pumps that do not split by mode; one factor under the starts. |
+| `entities.cop_heating_month` … `cop_hot_water_year` | | Compared with today's factor; the year stands in where no month is given. |
 | `circuits[].active` | HEATING, ECO, COOLING, … | Words of the circuit's state that mean it takes heat. |
 | `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store, so it shows there and as a small mark on the hot water in the flow, not as a circuit. A circuit named or marked as circulation is moved to the hot water store. |
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |

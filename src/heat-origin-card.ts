@@ -347,7 +347,6 @@ export class HeatOriginCard extends LitElement {
     const blocks: Record<string, () => unknown> = {
       flow: () => this._renderFlow(),
       day: () => this._renderDay(),
-      origin: () => this._renderOrigin(),
       stores: () => this._renderStores()
     };
 
@@ -577,7 +576,7 @@ export class HeatOriginCard extends LitElement {
                   <circle cx="224" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
                   ${airGlyph(224, cy)}
                   <text x="224" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(air, locale) : outdoor !== undefined ? `${outdoor}°` : "–"}</text>
-                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._t("flow.air") : this._t("flow.outside")}</text>
+                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._t(`ambient.${config.source}`) : this._t("flow.outside")}</text>
                 </g>`
               : nothing}
             <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
@@ -658,7 +657,7 @@ export class HeatOriginCard extends LitElement {
           ? {
               glyph: airGlyph(0, 0),
               strong: `${formatPower(air, locale)} kW`,
-              weak: outdoor !== undefined ? ` · ${outdoor} °C` : ` · ${this._t("flow.air")}`,
+              weak: outdoor !== undefined ? ` · ${outdoor} °C` : ` · ${this._t(`ambient.${config.source}`)}`,
               entity: config.entities.outdoor ?? config.entities.heat_power
             }
           : outdoor !== undefined
@@ -733,7 +732,7 @@ export class HeatOriginCard extends LitElement {
           <circle cx="36" cy=${airY} r="18" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
           ${airGlyph(36, airY)}
           <text x="36" y=${airY + 33} text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? `${formatPower(air, locale)} kW` : outdoor !== undefined ? `${outdoor} °C` : ""}</text>
-          <text x="36" y=${airY + 46} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t("flow.air")}${outdoor !== undefined ? ` ${outdoor} °C` : ""}` : this._t("flow.outside")}</text>
+          <text x="36" y=${airY + 46} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t(`ambient.${config.source}`)}${outdoor !== undefined ? ` ${outdoor} °C` : ""}` : this._t("flow.outside")}</text>
         </g>`);
     }
 
@@ -886,6 +885,40 @@ export class HeatOriginCard extends LitElement {
     const shortToday = today.shortRuns.length;
     const shortYesterday = yesterday?.shortRuns.length ?? 0;
 
+    // Performance factors under the running times: today's from the energy
+    // counters, set against the month's (or the year's) so a change stands out.
+    const e = config.entities;
+    const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
+    const factor = (heat: number | undefined, electric: number | undefined) =>
+      heat !== undefined && electric !== undefined && electric > 0.05 ? heat / electric : undefined;
+    const perf = (today: number | undefined, month: number | undefined, year: number | undefined, entity: string | undefined) => {
+      const ref = month ?? year;
+      if (today === undefined && ref === undefined) return nothing;
+      const diff = today !== undefined && ref !== undefined ? today - ref : 0;
+      const arrow = Math.abs(diff) >= 0.5 ? (diff > 0 ? "▲" : "▼") : "";
+      return html`<span class="stat-sub clickable" @click=${() => this._moreInfo(entity)}>
+        ${today !== undefined
+          ? html`<span>${this._t("cop.az")} <b>${this._one(today)}</b>${arrow ? html`<i>${arrow}</i>` : nothing}</span>`
+          : nothing}
+        ${ref !== undefined ? html`<span>${this._t(month !== undefined ? "cop.month" : "cop.year")} ${this._one(ref)}</span>` : nothing}
+      </span>`;
+    };
+    const heatingPerf = perf(
+      factor(kwh(e.heating_heat_today), kwh(e.heating_electric_today)),
+      this._num(e.cop_heating_month),
+      this._num(e.cop_heating_year),
+      e.heating_heat_today ?? e.cop_heating_month ?? e.cop_heating_year
+    );
+    const waterPerf = perf(
+      factor(kwh(e.hot_water_heat_today), kwh(e.hot_water_electric_today)),
+      this._num(e.cop_hot_water_month),
+      this._num(e.cop_hot_water_year),
+      e.hot_water_heat_today ?? e.cop_hot_water_month ?? e.cop_hot_water_year
+    );
+    // Heat pumps that count only totals get one factor, under the starts.
+    const totalPerf =
+      heatingPerf === nothing && waterPerf === nothing ? perf(factor(kwh(e.heat_today), kwh(e.electric_today)), undefined, undefined, e.heat_today) : nothing;
+
     return html`
       <div class="section">
         <div class="section-head"><span>${this._t("day.title")}</span></div>
@@ -905,7 +938,7 @@ export class HeatOriginCard extends LitElement {
           ${hasPv ? html`<span><i class="sw pv"></i>${this._t("day.pv")}</span>` : nothing}
         </div>
         <div class="stats">
-          <div class="stat"><span class="stat-k">${this._t("day.starts")}</span><span class="stat-v">${today.starts}</span></div>
+          <div class="stat"><span class="stat-k">${this._t("day.starts")}</span><span class="stat-v">${today.starts}</span>${totalPerf}</div>
           ${config.day.short_run > 0
             ? html`<div class="stat ${shortToday + shortYesterday > 0 ? "warn" : ""}">
                 <span class="stat-k">${this._t("day.short_runs")}</span>
@@ -916,8 +949,8 @@ export class HeatOriginCard extends LitElement {
                 >
               </div>`
             : nothing}
-          <div class="stat"><span class="stat-k">${this._t("kind.hot_water")}</span><span class="stat-v">${this._hm(today.minutes.hot_water ?? 0)}</span></div>
-          <div class="stat"><span class="stat-k">${this._t(`kind.${third}`)}</span><span class="stat-v">${this._hm(today.minutes[third] ?? 0)}</span></div>
+          <div class="stat"><span class="stat-k">${this._t("kind.hot_water")}</span><span class="stat-v">${this._hm(today.minutes.hot_water ?? 0)}</span>${waterPerf}</div>
+          <div class="stat"><span class="stat-k">${this._t(`kind.${third}`)}</span><span class="stat-v">${this._hm(today.minutes[third] ?? 0)}</span>${third === "heating" ? heatingPerf : nothing}</div>
         </div>
         ${config.day.cycling_from > 0 && shortToday >= config.day.cycling_from
           ? html`<div class="alert">
@@ -925,84 +958,6 @@ export class HeatOriginCard extends LitElement {
               <span>${this._t("day.cycling", { n: String(shortToday) })}</span>
             </div>`
           : nothing}
-      </div>
-    `;
-  }
-
-  // ─── origin ────────────────────────────────────────────────
-
-  private _renderOrigin() {
-    const config = this._config as ResolvedConfig;
-    const e = config.entities;
-    const locale = this._locale;
-    const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
-
-    const rows: Array<{ name: string; heat: number; electric: number; heatId?: string }> = [];
-    const heatingHeat = kwh(e.heating_heat_today);
-    const heatingElectric = kwh(e.heating_electric_today);
-    const waterHeat = kwh(e.hot_water_heat_today);
-    const waterElectric = kwh(e.hot_water_electric_today);
-    if (heatingHeat !== undefined && heatingElectric !== undefined)
-      rows.push({ name: this._t("kind.heating"), heat: heatingHeat, electric: heatingElectric, heatId: e.heating_heat_today });
-    if (waterHeat !== undefined && waterElectric !== undefined)
-      rows.push({ name: this._t("kind.hot_water"), heat: waterHeat, electric: waterElectric, heatId: e.hot_water_heat_today });
-    if (!rows.length) {
-      const heat = kwh(e.heat_today);
-      const electric = kwh(e.electric_today);
-      if (heat !== undefined && electric !== undefined) rows.push({ name: this._t("origin.total"), heat, electric, heatId: e.heat_today });
-    }
-    if (!rows.length) return nothing;
-
-    const totalHeat = rows.reduce((s, r) => s + r.heat, 0);
-    const totalElectric = rows.reduce((s, r) => s + r.electric, 0);
-    const scale = Math.max(...rows.map((r) => r.heat), 0.001);
-    const share = totalHeat > 0 ? Math.max(0, (totalHeat - totalElectric) / totalHeat) : undefined;
-
-    const month = [this._num(e.cop_heating_month), this._num(e.cop_hot_water_month)];
-    const year = [this._num(e.cop_heating_year), this._num(e.cop_hot_water_year)];
-    const cell = (label: string, v: number | undefined) => (v === undefined ? html`<span></span>` : html`<span>${label} <b>${this._one(v)}</b></span>`);
-    const table =
-      month.some((v) => v !== undefined) || year.some((v) => v !== undefined)
-        ? html`<div class="year">
-            <span></span><span>${this._t("kind.heating")}</span><span>${this._t("kind.hot_water")}</span>
-            ${month.some((v) => v !== undefined)
-              ? html`<span>${this._t("origin.month")}</span>${cell(this._t("origin.az"), month[0])}${cell(this._t("origin.az"), month[1])}`
-              : nothing}
-            ${year.some((v) => v !== undefined)
-              ? html`<span>${this._t("origin.year")}</span>${cell(this._t("origin.jaz"), year[0])}${cell(this._t("origin.jaz"), year[1])}`
-              : nothing}
-          </div>`
-        : nothing;
-
-    return html`
-      <div class="section">
-        <div class="section-head"><span>${this._t("origin.title")}</span><b>${this._one(totalHeat)} kWh</b></div>
-        ${share !== undefined
-          ? html`<div class="origin-big"><span class="n">${formatNumber(share * 100, locale, 0)} %</span><span class="s">${this._t(`origin.ambient.${config.source}`)}</span></div>`
-          : nothing}
-        ${rows.map((row) => {
-          const air = Math.max(0, row.heat - row.electric);
-          const factor = row.electric > 0.01 ? row.heat / row.electric : undefined;
-          const widthPct = (row.heat / scale) * 100;
-          const powerPct = row.heat > 0 ? (Math.min(row.electric, row.heat) / row.heat) * 100 : 0;
-          return html`<div class="origin-row" @click=${() => this._moreInfo(row.heatId)}>
-            <div class="origin-line">
-              <span class="name">${row.name} <span class="mono dim">${this._one(row.heat)} kWh</span></span>
-              ${factor !== undefined ? html`<span class="mono dim">${this._t("origin.az")} <b style="color:var(--ho-ink)">${this._one(factor)}</b></span>` : nothing}
-            </div>
-            <div class="bar" style="width:${widthPct.toFixed(1)}%" role="img"
-              aria-label="${row.name}: ${this._one(row.electric)} kWh ${this._t("origin.electricity")}, ${this._one(air)} kWh ${this._t("origin.ambient_short")}">
-              ${row.heat > 0 ? html`<span style="width:${powerPct.toFixed(1)}%;background:var(--ho-power)"></span>` : nothing}
-              ${air > 0 ? html`<span style="width:${(100 - powerPct).toFixed(1)}%;background:var(--ho-air)"></span>` : nothing}
-            </div>
-            <div class="origin-sub">${this._one(row.electric)} ${this._t("origin.electricity")} · ${this._one(air)} ${this._t("origin.ambient_short")}</div>
-          </div>`;
-        })}
-        <div class="legend">
-          <span><i class="sw" style="background:var(--ho-power)"></i>${this._t("origin.electricity")}</span>
-          <span><i class="sw" style="background:var(--ho-air)"></i>${this._t(`origin.ambient.${config.source}`)}</span>
-        </div>
-        ${table}
       </div>
     `;
   }
