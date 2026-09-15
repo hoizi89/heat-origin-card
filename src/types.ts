@@ -119,6 +119,11 @@ export interface ExtraFigure {
 }
 
 export interface FlowOptions {
+  /**
+   * `split`: stores left, circuits right, electricity and ambient heat as lines
+   * above and below the heat pump. `stacked`: sources left, all takers right.
+   */
+  layout?: "split" | "stacked";
   /** Flow, return, spread and volume under the flow drawing. */
   spread?: boolean;
   /** Flow, return and spread inside each circuit's box. */

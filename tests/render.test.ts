@@ -53,7 +53,7 @@ describe("the flow", () => {
 
   it("colours the electricity by where it comes from and names the source", async () => {
     const { root } = await mount(FULL_CONFIG);
-    expect(text(root)).toContain("Strom · PV");
+    expect(text(root.querySelector(".source-line") as Element)).toContain("1,73 kW · PV");
     const grid = await mount(
       FULL_CONFIG,
       makeHass({
@@ -61,7 +61,9 @@ describe("the flow", () => {
         [IDS.grid_power]: { entity_id: IDS.grid_power, state: "2700", attributes: { unit_of_measurement: "W" } }
       })
     );
-    expect(text(grid.root)).toContain("Strom · Netz");
+    expect(text(grid.root.querySelector(".source-line") as Element)).toContain("· Netz");
+    const stacked = await mount({ ...FULL_CONFIG, flow: { layout: "stacked" } });
+    expect(text(stacked.root)).toContain("Strom · PV");
   });
 
   it("draws the heat flowing to hot water and the circuits with their words, the circulation only as a mark on the hot water", async () => {
@@ -77,6 +79,25 @@ describe("the flow", () => {
     expect(text(root.querySelector(".section svg") as Element)).not.toContain("Zirkulation 34,3");
     expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation läuft");
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(1);
+  });
+
+  it("splits the takers: stores left of the heat pump, circuits right, sources above and below", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const box = (name: string) =>
+      [...root.querySelectorAll(".section svg rect")].find((r) => r.parentElement?.textContent?.includes(name)) as Element;
+    const x = (name: string) => Number(box(name).getAttribute("x"));
+    expect(x("Warmwasser")).toBeLessThan(100);
+    expect(x("Puffer")).toBeLessThan(100);
+    expect(x("FBH EG")).toBeGreaterThan(200);
+    expect(x("Heizkörper OG")).toBeGreaterThan(200);
+    const lines = [...root.querySelectorAll(".source-line")].map((l) => text(l));
+    expect(lines).toEqual(["1,73 kW · PV", "4,88 kW · 20,2 °C"]);
+  });
+
+  it("keeps only the outdoor temperature in the middle while standing still", async () => {
+    const { root } = await mount(FULL_CONFIG, idle());
+    const lines = [...root.querySelectorAll(".source-line")].map((l) => text(l));
+    expect(lines).toEqual(["20,2 °C außen"]);
   });
 
   it("puts flow, return, spread, volume and extra figures under the flow while running", async () => {

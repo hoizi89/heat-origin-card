@@ -602,7 +602,104 @@ export class HeatOriginCard extends LitElement {
 
     const rowH = sinks.some((s) => s.detail) ? 46 : 36;
     const gap = 8;
-    const stack = sinks.length ? sinks.length * rowH + (sinks.length - 1) * gap : 0;
+    const stackOf = (n: number) => (n ? n * rowH + (n - 1) * gap : 0);
+
+    // A box for one taker; the line leaves the ring towards the box's near edge.
+    const sinkNode = (sink: Sink, x: number, w: number, y: number, from: [number, number], side: 1 | -1) => {
+      const mid = y + rowH / 2;
+      const edge = side === 1 ? x : x + w;
+      const bend = Math.max(16, Math.abs(edge - from[0]) * 0.45) * side;
+      const path = `M${from[0]} ${from[1]} C ${from[0] + bend} ${from[1]}, ${edge - bend} ${mid}, ${edge} ${mid}`;
+      const maxChars = Math.floor((w - 16) / (11.5 * 0.58));
+      const name = sink.name.length > maxChars ? `${sink.name.slice(0, maxChars - 1)}…` : sink.name;
+      return svg`
+        ${sink.fed
+          ? svg`<path d=${path} fill="none" stroke=${sink.tone} stroke-width=${width(heat)} stroke-linecap="round"/>
+               <path d=${path} fill="none" stroke="#fff" stroke-width="3" opacity="0.85" class="flow-dash"/>`
+          : svg`<path d=${path} fill="none" stroke=${sink.active ? sink.tone : "var(--ho-track)"} stroke-width="2" opacity=${sink.active ? 0.6 : 1}
+              stroke-dasharray=${running ? "" : "3 5"}/>`}
+        <g class="clickable" @click=${() => this._moreInfo(sink.entity)}>
+          ${name !== sink.name ? svg`<title>${sink.name}</title>` : nothing}
+          <rect x=${x} y=${y} width=${w} height=${rowH} rx="8"
+            fill=${sink.active ? `color-mix(in srgb, ${sink.tone} 16%, var(--ho-surface))` : "var(--ho-surface)"}
+            stroke=${sink.active ? sink.tone : "var(--ho-hairline)"} stroke-width="1.5"/>
+          <text x=${x + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${name}</text>
+          <text x=${x + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
+          ${sink.right ? svg`<text x=${x + w - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
+          ${sink.circulating
+            ? svg`<g transform="translate(${x + w - 16} ${y + 25})" aria-label=${this._t("stores.circulation")}>
+                <title>${this._t("stores.circulation")} ${this._t("stores.circulation_on")}</title>
+                <path d="M-5.5 0 A5.5 5.5 0 1 1 0 5.5" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M-3.2 5.5 L0 5.5 L0 2.3" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </g>`
+            : nothing}
+          ${sink.detail ? svg`<text x=${x + 9} y=${y + 41} font-size="10" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
+        </g>
+      `;
+    };
+
+    if (config.flow.layout === "split" && sinks.length >= 2) {
+      // Stores on the left, circuits on the right: heat leaves the heat pump both ways.
+      const stores = sinks.slice(0, config.stores.length);
+      const circuits = sinks.slice(config.stores.length);
+      const half = Math.ceil(sinks.length / 2);
+      const [left, right] = stores.length && circuits.length ? [stores, circuits] : [sinks.slice(0, half), sinks.slice(half)];
+      const r = 36;
+      const bw = 120;
+      const cx = W / 2;
+
+      // Electricity above the heat pump, ambient heat below, each as one short line.
+      const top =
+        running && config.entities.electric_power
+          ? { glyph: powerGlyph(0, 0), strong: `${formatPower(electric, locale)} kW`, weak: ` · ${this._sourceLabel(shares)}`, entity: config.entities.electric_power }
+          : undefined;
+      const bottom =
+        running && hasBoth
+          ? {
+              glyph: airGlyph(0, 0),
+              strong: `${formatPower(air, locale)} kW`,
+              weak: outdoor !== undefined ? ` · ${outdoor} °C` : ` · ${this._t("flow.air")}`,
+              entity: config.entities.outdoor ?? config.entities.heat_power
+            }
+          : outdoor !== undefined
+            ? { glyph: airGlyph(0, 0), strong: `${outdoor} °C`, weak: ` ${this._t("flow.outside")}`, entity: config.entities.outdoor }
+            : undefined;
+
+      const reach = r + (top || bottom ? 22 : 6);
+      const H = Math.max(stackOf(left.length), stackOf(right.length), 2 * reach) + 8;
+      const cy = H / 2;
+      const label = (line: { glyph: TemplateResult; strong: string; weak: string; entity?: string } | undefined, y: number) => {
+        if (!line) return nothing;
+        const size = 11;
+        const textW = (line.strong.length + line.weak.length) * size * 0.56;
+        const x0 = cx - (textW + 17) / 2;
+        return svg`<g class="clickable source-line" @click=${() => this._moreInfo(line.entity)}>
+          <g transform="translate(${x0 + 6} ${y - 4}) scale(0.6)">${line.glyph}</g>
+          <text x=${x0 + 17} y=${y} font-size=${size} class="mono"><tspan font-weight="600" fill="var(--ho-ink)">${line.strong}</tspan><tspan fill="var(--ho-muted)">${line.weak}</tspan></text>
+        </g>`;
+      };
+      const leftY0 = cy - stackOf(left.length) / 2;
+      const rightY0 = cy - stackOf(right.length) / 2;
+
+      return html`
+        <div class="section">
+          <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${this._modeLabel(mode.kind, mode.raw)}">
+            ${left.map((s, i) => sinkNode(s, 1, bw, leftY0 + i * (rowH + gap), [cx - r, cy], -1))}
+            ${right.map((s, i) => sinkNode(s, W - bw - 1, bw, rightY0 + i * (rowH + gap), [cx + r, cy], 1))}
+            <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
+              <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
+              ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
+              ${centre(cx, cy, r, 23)}
+            </g>
+            ${label(top, cy - r - 9)}
+            ${label(bottom, cy + r + 17)}
+          </svg>
+          ${this._footBlock(running)}
+        </div>
+      `;
+    }
+
+    const stack = stackOf(sinks.length);
     const H = Math.max(200, stack + 8);
     const cy = H / 2;
     const cx = 150;
@@ -640,33 +737,7 @@ export class HeatOriginCard extends LitElement {
         </g>`);
     }
 
-    const sinkNodes = sinks.map((sink, i) => {
-      const y = y0 + i * (rowH + gap);
-      const mid = y + rowH / 2;
-      const path = `M${cx + r} ${cy} C ${cx + r + 24} ${cy}, ${sinkX - 24} ${mid}, ${sinkX} ${mid}`;
-      return svg`
-        ${sink.fed
-          ? svg`<path d=${path} fill="none" stroke=${sink.tone} stroke-width=${width(heat)} stroke-linecap="round"/>
-               <path d=${path} fill="none" stroke="#fff" stroke-width="3" opacity="0.85" class="flow-dash"/>`
-          : svg`<path d=${path} fill="none" stroke=${sink.active ? sink.tone : "var(--ho-track)"} stroke-width="2" opacity=${sink.active ? 0.6 : 1}/>`}
-        <g class="clickable" @click=${() => this._moreInfo(sink.entity)}>
-          <rect x=${sinkX} y=${y} width=${sinkW} height=${rowH} rx="8"
-            fill=${sink.active ? `color-mix(in srgb, ${sink.tone} 16%, var(--ho-surface))` : "var(--ho-surface)"}
-            stroke=${sink.active ? sink.tone : "var(--ho-hairline)"} stroke-width="1.5"/>
-          <text x=${sinkX + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${sink.name}</text>
-          <text x=${sinkX + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
-          ${sink.right ? svg`<text x=${W - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
-          ${sink.circulating
-            ? svg`<g transform="translate(${W - 18} ${y + 25})" aria-label=${this._t("stores.circulation")}>
-                <title>${this._t("stores.circulation")} ${this._t("stores.circulation_on")}</title>
-                <path d="M-5.5 0 A5.5 5.5 0 1 1 0 5.5" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round"/>
-                <path d="M-3.2 5.5 L0 5.5 L0 2.3" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </g>`
-            : nothing}
-          ${sink.detail ? svg`<text x=${sinkX + 9} y=${y + 41} font-size="10" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
-        </g>
-      `;
-    });
+    const sinkNodes = sinks.map((sink, i) => sinkNode(sink, sinkX, sinkW - 1, y0 + i * (rowH + gap), [cx + r, cy], 1));
 
     return html`
       <div class="section">

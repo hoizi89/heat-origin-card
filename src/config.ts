@@ -57,6 +57,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     modes: resolveModes(config.modes),
     ...foldCirculation(config),
     flow: {
+      layout: config.flow?.layout === "stacked" ? "stacked" : "split",
       spread: config.flow?.spread ?? true,
       circuit_details: config.flow?.circuit_details ?? false,
       extras: config.flow?.extras ?? []
@@ -95,6 +96,7 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
     },
     flow: {
       ...config.flow,
+      layout: resolved.flow.layout,
       spread: resolved.flow.spread,
       circuit_details: resolved.flow.circuit_details
     },
@@ -200,6 +202,18 @@ export function getConfigForm(locale: string) {
       name: "flow",
       title: t("editor.options"),
       schema: [
+        {
+          name: "layout",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "split", label: t("editor.layout_split") },
+                { value: "stacked", label: t("editor.layout_stacked") }
+              ]
+            }
+          }
+        },
         { name: "spread", selector: { boolean: {} } },
         { name: "circuit_details", selector: { boolean: {} } }
       ]
@@ -253,6 +267,7 @@ export function getConfigForm(locale: string) {
     hot_water_electric_today: t("editor.hot_water_electric_today"),
     heat_today: t("editor.heat_today"),
     electric_today: t("editor.electric_today"),
+    layout: t("editor.layout"),
     spread: t("editor.spread"),
     circuit_details: t("editor.circuit_details"),
     days: t("editor.days"),

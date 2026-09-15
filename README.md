@@ -2,7 +2,7 @@
 
 A heat pump card for Home Assistant. Where the heat comes from, where it goes, and how the day went. The sister card to [Power Origin](https://github.com/hoizi89/power-origin-card).
 
-- **Heat flow** — electricity and ambient heat flow into the heat pump, the heat flows on to whatever is taking it: hot water, buffer, each heating circuit. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread. A running circulation pump puts a small loop mark on the hot water. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
+- **Heat flow** — the heat pump in the middle, the stores on its left and the heating circuits on its right; electricity and ambient heat stand as one line each above and below it. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread. A running circulation pump puts a small loop mark on the hot water. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
 - **Day band** — yesterday and today as 24-hour bands coloured by what the heat pump did, with PV power above. Starts, short runs and running time are counted from the history; hover a short-run marker for its time. A notice appears only when the heat pump cycles.
 - **Heat today** — the day's heat per mode, split into electricity and ambient heat, with the performance factor of the day and month and the seasonal performance factor of the year.
 - **Storage** — each store's temperature first, the tank drawn as its layering between the sensors, the set-points you enter as marks, and with the volume the usable heat in kWh.
@@ -86,6 +86,7 @@ flow:
 | `stores[].usable_min` | 40 hot water, 30 buffer | °C below which the heat counts as not usable. |
 | `stores[].kind` | guessed from the name | `hot_water` or `buffer`. |
 | `stores[].marks` | | `eco`, `target`, `pv`, `max` as numbers. |
+| `flow.layout` | `split` | `split`: stores left, circuits right, sources above and below the heat pump. `stacked`: sources left, every taker right. With a single taker the drawing is always stacked. |
 | `flow.spread` | `true` | Flow, return, spread and volume under the drawing. |
 | `flow.circuit_details` | `false` | Flow, return and spread inside each circuit. |
 | `flow.extras` | | Further figures, `{ entity, name, running_only }`; `running_only` hides a figure at rest, e.g. hot gas. |
