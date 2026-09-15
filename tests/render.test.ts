@@ -64,7 +64,7 @@ describe("the flow", () => {
     expect(text(grid.root)).toContain("Strom · Netz");
   });
 
-  it("draws the heat flowing to hot water, the circuits with their words, and the circulation running", async () => {
+  it("draws the heat flowing to hot water and the circuits with their words, the circulation only as a mark on the hot water", async () => {
     const { root } = await mount(FULL_CONFIG);
     const t = text(root);
     expect(t).toContain("6,6");
@@ -73,8 +73,9 @@ describe("the flow", () => {
     // A circuit in summer mode moves no water; its spread would be a number without meaning.
     expect(t).not.toContain("25,8/24,7");
     expect(t).toContain("24,5°");
-    expect(t).toContain("34,3 °C · läuft");
-    // Only the hot water is fed by the heat pump; the circulation runs on its own.
+    // Circulation draws from the store, not from the heat pump: no box of its own in the flow.
+    expect(text(root.querySelector(".section svg") as Element)).not.toContain("Zirkulation 34,3");
+    expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation läuft");
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(1);
   });
 
@@ -166,6 +167,20 @@ describe("storage", () => {
     expect(stores[1]).toContain("8,2 kWh");
     expect(text(root)).toContain("≈ 14,3 kWh nutzbar");
     expect(root.querySelectorAll(".mark.reached")).toHaveLength(3);
+    expect(stores[0]).toContain("Zirkulation 34,3 °C · läuft");
+    expect(stores[1]).not.toContain("Zirkulation");
+  });
+
+  it("folds a circulation written as a circuit into the hot water store", async () => {
+    const legacy = {
+      ...FULL_CONFIG,
+      circuits: [...(FULL_CONFIG.circuits ?? []), { name: "Zirkulation", pump: "switch.zirkulationspumpe", temperature: "sensor.lambdawp_boil1_actual_circulation_temperature" }],
+      stores: (FULL_CONFIG.stores ?? []).map(({ circulation, circulation_pump, ...s }) => s)
+    };
+    const { root } = await mount(legacy);
+    expect(text(root.querySelector(".section svg") as Element)).not.toContain("Zirkulation 34,3");
+    expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation läuft");
+    expect(text(root.querySelector(".store") as Element)).toContain("Zirkulation 34,3 °C · läuft");
   });
 
   it("says how far below target a store is once nothing charges it", async () => {

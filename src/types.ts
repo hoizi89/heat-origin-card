@@ -72,7 +72,7 @@ export interface HeatOriginEntities {
 
 export interface CircuitConfig {
   name: string;
-  /** A heating circuit takes heat from the heat pump; circulation only moves hot water. */
+  /** A heating circuit takes heat from the heat pump. `circulation` is moved to the hot water store. */
   kind?: CircuitKind;
   /** A pump or valve whose "on" means the circuit is running. */
   pump?: string;
@@ -99,7 +99,10 @@ export interface StoreConfig {
   kind?: StoreKind;
   top: string;
   bottom?: string;
+  /** The temperature in the circulation line. */
   circulation?: string;
+  /** The circulation pump; on means hot water is being moved through the pipes. */
+  circulation_pump?: string;
   /** Set-points entered as numbers: many integrations report them wrongly. */
   marks?: StoreMarks;
   /** Litres; with it the card shows the usable heat in kWh. */

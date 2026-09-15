@@ -16,6 +16,28 @@ function guessKind(name: string): StoreKind {
   return /warmwasser|hot.?water|boiler|dhw|brauchwasser/i.test(name) ? "hot_water" : "buffer";
 }
 
+/**
+ * Circulation takes heat out of the hot water store; it is no taker of the
+ * heat pump's. A circuit written as circulation, as earlier versions asked,
+ * moves onto the first hot water store and leaves the flow.
+ */
+function foldCirculation(config: HeatOriginCardConfig) {
+  const circuits = (config.circuits ?? []).map((c) => ({
+    ...c,
+    kind: c.kind ?? (/zirkulation|circulation/i.test(c.name) ? ("circulation" as const) : ("heating" as const))
+  }));
+  const stores = (config.stores ?? []).map((s) => ({ ...s, kind: s.kind ?? guessKind(s.name) }));
+  const hotWater = stores.find((s) => s.kind === "hot_water");
+  const loops = circuits.filter((c) => c.kind === "circulation");
+  if (hotWater && loops.length) {
+    const loop = loops[0];
+    hotWater.circulation = hotWater.circulation ?? loop.temperature ?? loop.flow;
+    hotWater.circulation_pump = hotWater.circulation_pump ?? loop.pump;
+    return { circuits: circuits.filter((c) => c.kind !== "circulation"), stores };
+  }
+  return { circuits, stores };
+}
+
 export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   const sections = config.sections ?? {};
   const chosen = (sections.order ?? []).filter((s): s is SectionName => SECTIONS.includes(s));
@@ -33,11 +55,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     },
     entities: config.entities,
     modes: resolveModes(config.modes),
-    circuits: (config.circuits ?? []).map((c) => ({
-      ...c,
-      kind: c.kind ?? (/zirkulation|circulation/i.test(c.name) ? "circulation" : "heating")
-    })),
-    stores: (config.stores ?? []).map((s) => ({ ...s, kind: s.kind ?? guessKind(s.name) })),
+    ...foldCirculation(config),
     flow: {
       spread: config.flow?.spread ?? true,
       circuit_details: config.flow?.circuit_details ?? false,

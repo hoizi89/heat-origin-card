@@ -144,11 +144,6 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       flow: "sensor.lambdawp_hc2_flow_line_temperature",
       return: "sensor.lambdawp_hc2_return_line_temperature",
       room: "sensor.lambdawp_hc2_room_device_temperature"
-    },
-    {
-      name: "Zirkulation",
-      pump: "switch.zirkulationspumpe",
-      temperature: "sensor.lambdawp_boil1_actual_circulation_temperature"
     }
   ],
   stores: [
@@ -157,7 +152,9 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       top: "sensor.lambdawp_boil1_actual_high_temperature",
       bottom: "sensor.lambdawp_boil1_actual_low_temperature",
       marks: { eco: 44.5, target: 48.5, pv: 57.5 },
-      volume: 300
+      volume: 300,
+      circulation: "sensor.lambdawp_boil1_actual_circulation_temperature",
+      circulation_pump: "switch.zirkulationspumpe"
     },
     {
       name: "Puffer",

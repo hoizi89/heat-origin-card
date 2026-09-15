@@ -516,9 +516,12 @@ export const cardStyles = css`
     font-family: var(--ho-mono);
     font-size: 10.5px;
     color: var(--ho-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .store-sub.loop-on {
+    color: var(--ho-hot-water);
   }
 
   .store-energy {

@@ -73,6 +73,8 @@ interface Tip {
 
 interface Sink {
   name: string;
+  /** The store's circulation pump is running. */
+  circulating?: boolean;
   value: string;
   detail?: string;
   right?: string;
@@ -396,6 +398,7 @@ export class HeatOriginCard extends LitElement {
       const fed = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
       sinks.push({
         name: store.name,
+        circulating: store.kind === "hot_water" && Boolean(store.circulation_pump) && this._isOn(store.circulation_pump),
         value: `${top ?? "–"} °C`,
         detail: details && fed && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
         active: fed,
@@ -587,7 +590,7 @@ export class HeatOriginCard extends LitElement {
             ? html`<div class="sinks">
                 ${sinks.map(
                   (s) => html`<div class="sink ${s.active ? "active" : ""}" style="--tone:${s.tone}" @click=${() => this._moreInfo(s.entity)}>
-                    <span>${s.name}</span><span class="v">${s.value}${s.right ? ` · ${s.right}` : ""}</span>
+                    <span>${s.name}</span><span class="v">${s.value}${s.right ? ` · ${s.right}` : ""}${s.circulating ? ` · ${this._t("stores.circulation")}` : ""}</span>
                   </div>`
                 )}
               </div>`
@@ -653,6 +656,13 @@ export class HeatOriginCard extends LitElement {
           <text x=${sinkX + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${sink.name}</text>
           <text x=${sinkX + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
           ${sink.right ? svg`<text x=${W - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
+          ${sink.circulating
+            ? svg`<g transform="translate(${W - 18} ${y + 25})" aria-label=${this._t("stores.circulation")}>
+                <title>${this._t("stores.circulation")} ${this._t("stores.circulation_on")}</title>
+                <path d="M-5.5 0 A5.5 5.5 0 1 1 0 5.5" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M-3.2 5.5 L0 5.5 L0 2.3" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </g>`
+            : nothing}
           ${sink.detail ? svg`<text x=${sinkX + 9} y=${y + 41} font-size="10" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
         </g>
       `;
@@ -981,6 +991,14 @@ export class HeatOriginCard extends LitElement {
         bottom !== undefined
           ? `${this._t("flow.bottom")} ${formatTemp(bottom, locale)} · ${layering !== undefined && Math.abs(layering) >= 0.5 ? `Δ ${this._one(layering)} K` : this._t("stores.even")}`
           : undefined;
+      const loopTemp = this._temp(store.circulation);
+      const loopOn = store.circulation_pump ? this._isOn(store.circulation_pump) : undefined;
+      const circulation =
+        loopTemp !== undefined || loopOn !== undefined
+          ? html`<span class="store-sub ${loopOn ? "loop-on" : ""}">${this._t("stores.circulation")}${loopTemp !== undefined ? ` ${loopTemp} °C` : ""}${
+              loopOn !== undefined ? ` · ${this._t(loopOn ? "stores.circulation_on" : "stores.circulation_off")}` : ""
+            }</span>`
+          : nothing;
       const marks = (["eco", "target", "pv", "max"] as const)
         .filter((k) => store.marks?.[k] !== undefined)
         .map((k) => {
@@ -1002,15 +1020,13 @@ export class HeatOriginCard extends LitElement {
           <span class="store-temp">${top !== undefined ? formatTemp(top, locale) : "–"}<small>°C</small></span>
           ${state ? html`<span class="store-state" style="color:${state.tone}">${state.text}</span>` : nothing}
           ${sub ? html`<span class="store-sub">${sub}</span>` : nothing}
+          ${circulation}
         </div>
         ${energy}
         ${marks.length ? html`<div class="marks">${marks}</div>` : nothing}
       </div>`;
     });
 
-    const circulation = config.stores
-      .filter((s) => s.circulation && this._num(s.circulation) !== undefined)
-      .map((s) => html`<span>${this._t("stores.circulation")} <b>${this._temp(s.circulation)} °C</b></span>`);
 
     return html`
       <div class="section">
@@ -1019,7 +1035,6 @@ export class HeatOriginCard extends LitElement {
           ${anyVolume ? html`<b>≈ ${this._one(totalUsable)} kWh ${this._t("stores.usable")}</b>` : nothing}
         </div>
         ${rows}
-        ${circulation.length ? html`<div class="foot">${circulation}</div>` : nothing}
       </div>
     `;
   }

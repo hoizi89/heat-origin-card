@@ -2,7 +2,7 @@
 
 A heat pump card for Home Assistant. Where the heat comes from, where it goes, and how the day went. The sister card to [Power Origin](https://github.com/hoizi89/power-origin-card).
 
-- **Heat flow** — electricity and ambient heat flow into the heat pump, the heat flows on to whatever is taking it: hot water, buffer, each heating circuit. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread; a circulation loop shows whether its pump runs. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
+- **Heat flow** — electricity and ambient heat flow into the heat pump, the heat flows on to whatever is taking it: hot water, buffer, each heating circuit. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread. A running circulation pump puts a small loop mark on the hot water. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
 - **Day band** — yesterday and today as 24-hour bands coloured by what the heat pump did, with PV power above. Starts, short runs and running time are counted from the history; hover a short-run marker for its time. A notice appears only when the heat pump cycles.
 - **Heat today** — the day's heat per mode, split into electricity and ambient heat, with the performance factor of the day and month and the seasonal performance factor of the year.
 - **Storage** — each store's temperature first, the tank drawn as its layering between the sensors, the set-points you enter as marks, and with the volume the usable heat in kWh.
@@ -44,16 +44,14 @@ circuits:
     flow: sensor.lambdawp_hc1_flow_line_temperature
     return: sensor.lambdawp_hc1_return_line_temperature
     room: sensor.lambdawp_hc1_room_device_temperature
-  - name: Circulation
-    kind: circulation
-    pump: switch.circulation_pump
-    temperature: sensor.lambdawp_boil1_actual_circulation_temperature
 stores:
   - name: Hot water
     top: sensor.lambdawp_boil1_actual_high_temperature
     bottom: sensor.lambdawp_boil1_actual_low_temperature
     marks: { eco: 44.5, target: 48.5, pv: 57.5 }
     volume: 300
+    circulation: sensor.lambdawp_boil1_actual_circulation_temperature
+    circulation_pump: switch.circulation_pump
   - name: Buffer
     kind: buffer
     top: sensor.lambdawp_buff1_actual_high_temperature
@@ -81,7 +79,7 @@ flow:
 | `entities.heat_today`, `electric_today` | | Totals, for heat pumps that do not split by mode. |
 | `entities.cop_heating_month` … `cop_hot_water_year` | | Shown under the day's heat. |
 | `circuits[].active` | HEATING, ECO, COOLING, … | Words of the circuit's state that mean it takes heat. |
-| `circuits[].kind` | guessed from the name | `heating` or `circulation`; circulation is not fed by the heat pump. |
+| `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store, so it shows there and as a small mark on the hot water in the flow, not as a circuit. A circuit named or marked as circulation is moved to the hot water store. |
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |
 | `circuits[].temperature` | | One temperature, for loops without flow and return. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh. |
