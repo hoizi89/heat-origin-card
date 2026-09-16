@@ -1,6 +1,6 @@
 import { LitElement, html, nothing, svg, type PropertyValues, type TemplateResult } from "lit";
 import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
-import { W as DRAW_W, T as TYPE, box, branch, bypass, connector, dial, spine, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
+import { W as DRAW_W, T, TL, textWidth, box, branch, bypass, connector, dial, spine, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
 import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
 import { localize } from "./localize";
@@ -114,7 +114,7 @@ const DRIFT_MIN = 0.15;
  * around the drawing.
  */
 const COL_W = 171;
-const BOX_H_COL = 74;
+const BOX_H_COL = 80;
 const COL_R = 196;
 const COL_GAP = 8;
 const R_COL_PUMP = 48;
@@ -1029,7 +1029,7 @@ export class HeatOriginCard extends LitElement {
       uid += 1;
       const circuit = config.circuits[i];
       const entity = circuit?.pump ?? circuit?.state ?? circuit?.flow ?? circuit?.temperature;
-      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H_COL, PALETTE, style, uid, () => this._moreInfo(entity)));
+      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
     });
 
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
@@ -1087,6 +1087,8 @@ export class HeatOriginCard extends LitElement {
   private _centre(cx: number, cy: number, r: number, heat: number, electric: number, cop: number | undefined, running: boolean, mode: ReturnType<HeatOriginCard["_mode"]>) {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
+    // The wide circle of the columns takes the larger type; the split's smaller one keeps the smaller.
+    const TYPE = r >= 40 ? TL : T;
     if (!running) {
       const last = lastRun(this._days()?.at(-1));
       if (!last) {
@@ -1101,9 +1103,9 @@ export class HeatOriginCard extends LitElement {
       // enough at that height, the word itself goes there; the symbol is the fallback,
       // and it has to be shifted by half its own width to sit on the middle.
       const word = this._t(`kind.${last.kind}`);
-      const sec = r >= 40 ? TYPE.small : 10;
+      const sec = TYPE.small;
       const chord = 2 * Math.sqrt(Math.max(0, r * r - 21 * 21)) - 8;
-      const fits = word.length * sec * 0.56 <= chord;
+      const fits = textWidth(word, sec) <= chord;
       const mark = last.kind === "hot_water" ? "water" : last.kind === "heating" ? "flame" : undefined;
       return svg`
         <text x=${cx} y=${cy - 12} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.08em"
@@ -1126,11 +1128,11 @@ export class HeatOriginCard extends LitElement {
         : `COP ${formatNumber(cop, locale, 1)}`;
     const thirdTone = centre === "both" ? "var(--ho-power)" : PALETTE.ink;
     return svg`
-      <text x=${cx} y=${cy - 4} text-anchor="middle" font-size=${r >= 40 ? TYPE.hero : 21} font-weight="700"
+      <text x=${cx} y=${cy - 4} text-anchor="middle" font-size=${TYPE.hero} font-weight="700"
         fill=${PALETTE.ink}>${formatNumber(big, locale, big < 10 ? 1 : 0)}</text>
       <text x=${cx} y=${cy + 7} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.06em" fill=${PALETTE.muted}>${unit}</text>
       ${third
-        ? svg`<text x=${cx} y=${cy + 20} text-anchor="middle" font-size=${r >= 40 ? TYPE.small : 10} font-weight="600" fill=${thirdTone}>${third}</text>`
+        ? svg`<text x=${cx} y=${cy + 20} text-anchor="middle" font-size=${TYPE.small} font-weight="600" fill=${thirdTone}>${third}</text>`
         : nothing}`;
   }
 

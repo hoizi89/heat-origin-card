@@ -65,6 +65,23 @@ export interface BoxModel {
 export const W = 368;
 /** Four sizes, no more: labels, secondary figures, the figure, the one in the circle. */
 export const T = { micro: 8, small: 10, figure: 13.5, hero: 21 };
+/** The same four for the wide circle, which has the room for a step up. */
+export const TL = { micro: 10, small: 12, figure: 17, hero: 24 };
+
+/**
+ * How wide a word runs, in the dashboard's face. Digits and punctuation are narrow,
+ * capitals wide, and the card's rows are mostly digits, so one factor for every
+ * character called a row full that had a fifth of its width to spare.
+ */
+const CHAR_WIDTH: Record<string, number> = {
+  " ": 0.26, ".": 0.28, ",": 0.28, ":": 0.28, "·": 0.32, "°": 0.4, "+": 0.58, "−": 0.58, "-": 0.34, "/": 0.4, "→": 0.9,
+  "Δ": 0.66, "K": 0.62, "W": 0.9, "M": 0.85, "m": 0.86, "w": 0.75, "i": 0.24, "l": 0.24, "j": 0.24, "t": 0.34, "f": 0.34, "r": 0.36, "I": 0.28
+};
+export function textWidth(text: string, size: number): number {
+  let em = 0;
+  for (const ch of text) em += CHAR_WIDTH[ch] ?? (/\d/.test(ch) ? 0.56 : /[A-ZÄÖÜ]/.test(ch) ? 0.68 : 0.54);
+  return em * size;
+}
 
 const R_BOX = 9;
 
@@ -75,7 +92,7 @@ const R_BOX = 9;
  */
 function scaleOf(h: number) {
   return h >= 70
-    ? { micro: 9, small: 11, figure: 15, lab: 21, val: 43, icon: 19, short: 56, bar: 50, barH: 5, scale: 68, up: 26, down: 43, aUp: 23, aDown: 40, note: 66 }
+    ? { micro: 10, small: 12, figure: 16.5, lab: 22, val: 46, icon: 20, short: 60, bar: 54, barH: 5.5, scale: 73, up: 28, down: 46, aUp: 25, aDown: 43, note: 71 }
     : { micro: 8, small: 10, figure: 13.5, lab: 19, val: 38, icon: 17, short: 50, bar: 45, barH: 4.5, scale: 59, up: 23, down: 38, aUp: 20, aDown: 35, note: 57 };
 }
 
@@ -99,7 +116,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (style.labels === "name") {
     const mid = y + h / 2;
     // What the state word on the right leaves over is what the name may use.
-    const room = w - 22 - (m.labelRight ? m.labelRight.length * S.small * 0.56 + 8 : 0);
+    const room = w - 22 - (m.labelRight ? textWidth(m.labelRight, S.small) + 8 : 0);
     const fits = Math.max(4, Math.floor(room / (S.figure * 0.56)));
     const shown = m.name.length > fits ? `${m.name.slice(0, fits - 1)}…` : m.name;
     parts.push(svg`<text x=${x + 11} y=${mid - 5} font-size=${S.figure - 1.5} font-weight="600" fill=${t.ink}>${shown}</text>`);
@@ -130,7 +147,13 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
 
   const label = (text: string, xx: number, anchor: string, col: string) =>
     svg`<text x=${xx} y=${y + S.lab} text-anchor=${anchor} font-size=${S.micro} font-weight="700" letter-spacing="0.09em" fill=${col}>${text}</text>`;
-  parts.push(label(m.label, tx, "start", m.labelTone ?? t.muted));
+  // The word on the left may use what the unit on the right leaves; a name too long
+  // for a narrow box is cut, not written over it.
+  const spaced = (s: string) => textWidth(s, S.micro) + 0.09 * S.micro * s.length;
+  const labelRoom = rx - tx - (m.labelRight ? spaced(m.labelRight) + 8 : 0);
+  let shown = m.label;
+  while (shown.length > 3 && spaced(shown) > labelRoom) shown = `${shown.replace(/…$/, "").slice(0, -1).trimEnd()}…`;
+  parts.push(label(shown, tx, "start", m.labelTone ?? t.muted));
   if (m.labelRight) parts.push(label(m.labelRight, rx, "end", t.muted));
 
   parts.push(svg`<text x=${tx} y=${y + S.val} font-size=${S.figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
@@ -142,7 +165,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   // The card measures a store's fall for its forecast anyway; the arrow says which way
   // it is going for the price of seven pixels. The rate follows only where it fits,
   // because the direction is the part that is read at a glance.
-  let afterValue = tx + m.value.length * S.figure * 0.56;
+  let afterValue = tx + textWidth(m.value, S.figure);
   if (m.trend) {
     const ax = afterValue + 11;
     const ay = y + S.val - 4;
@@ -154,11 +177,11 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
         : arrow(ax, ay, m.trend.dir === "up", m.trend.dir === "up" ? m.tone : t.muted)
     );
     afterValue = ax + 5;
-    const room = rx - afterValue - (m.valueRight === undefined ? 0 : m.valueRight.length * S.small * 0.56);
+    const room = rx - afterValue - (m.valueRight === undefined ? 0 : textWidth(m.valueRight, S.small));
     const wide = m.loop ? 0 : 1;
-    if (m.trend.rate && room > m.trend.rate.length * S.micro * 0.56 + 40 * wide) {
+    if (m.trend.rate && room > textWidth(m.trend.rate, S.micro) + 40 * wide) {
       parts.push(svg`<text x=${afterValue + 4} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.trend.rate}</text>`);
-      afterValue += 4 + m.trend.rate.length * S.micro * 0.56;
+      afterValue += 4 + textWidth(m.trend.rate, S.micro);
     }
   }
 
@@ -167,8 +190,8 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (m.loop && w >= 150) {
     const lt = m.loop.on ? m.tone : t.muted;
     const leftEnd = afterValue;
-    const rightStart = m.valueRight === undefined ? rx : rx - m.valueRight.length * S.small * 0.56;
-    const width = 13 + m.loop.text.length * S.small * 0.56;
+    const rightStart = m.valueRight === undefined ? rx : rx - textWidth(m.valueRight, S.small);
+    const width = 13 + textWidth(m.loop.text, S.small);
     const lx = (leftEnd + rightStart) / 2 - width / 2;
     if (lx > leftEnd + 6 && lx + width < rightStart - 6) {
       parts.push(icon("loop", lx, y + S.val - 9, lt, 0.65));
@@ -176,39 +199,55 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     }
   }
 
+  const micro = (s: string) => textWidth(s, S.micro);
   if (m.pair) {
     // The arrow steps back far enough for whatever figure stands beside it.
-    const ax = rx - Math.max(28, m.pair.up.length * S.small * 0.56 + 11);
+    const ax = rx - Math.max(28, textWidth(m.pair.up, S.small) + 11);
+    // The spread sits beside the figure, in the gap before the arrow, where a wide box
+    // has room for it and a narrow one has not; the row below stays with the room.
+    if (m.pair.spread) {
+      const sx = tx + textWidth(m.value, S.figure) + 8;
+      if (sx + micro(m.pair.spread) < ax - 8) {
+        parts.push(svg`<text x=${sx.toFixed(1)} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.pair.spread}</text>`);
+      }
+    }
     parts.push(arrow(ax, y + S.aUp, true, tone));
     parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
     if (m.pair.curve) {
       // At rest a return line is a number with nothing behind it. What the curve wants
-      // is the figure that still means something, so it takes that place and says so.
+      // is the figure that still means something, so it takes that place and says so —
+      // by name where the name fits between it and the figure on the left.
+      const labelX = rx - textWidth(m.pair.curve, S.small) - 6;
+      const labelW = textWidth((m.pair.curveLabel ?? ""), S.micro);
       parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.curve}</text>`);
-      parts.push(svg`<text x=${rx - m.pair.curve.length * S.small * 0.56 - 6} y=${y + S.down} text-anchor="end"
-        font-size=${S.micro} fill=${t.muted}>${m.pair.curveLabel ?? ""}</text>`);
+      if (m.pair.curveLabel && labelX - labelW > tx + textWidth(m.value, S.figure) + 6) {
+        parts.push(svg`<text x=${labelX} y=${y + S.down} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.pair.curveLabel}</text>`);
+      }
     } else if (m.pair.down) {
       parts.push(arrow(ax, y + S.aDown, false, t.muted));
       parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.down}</text>`);
-    }
-    if (m.pair.note && !m.target) {
-      parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
-    }
-    if (m.pair.spread) {
-      parts.push(svg`<text x=${rx} y=${y + S.note} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.pair.spread}</text>`);
     }
   } else if (m.sub) {
     parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.sub}</text>`);
   }
 
-  // The room a circuit was asked for turns its own figure from a reading into an
-  // answer: twenty-five degrees is only too warm once something says what was wanted.
-  // It stands on its own, whether or not a pair of figures is drawn on the right.
-  if (m.target) {
+  // The row under the figure: the room a circuit was asked for — which turns its own
+  // figure from a reading into an answer, since twenty-five degrees is only too warm
+  // once something says what was wanted — then how far off it is, else the pair's
+  // note. Each goes in only where it fits; a narrow box keeps the answer and lets go.
+  let noteEnd = tx;
+  if (m.target && tx + micro(m.target.text) <= rx) {
     parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.target.text}</text>`);
-    parts.push(svg`<text x=${tx + m.target.text.length * S.micro * 0.56 + 7} y=${y + S.note}
-      font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
+    noteEnd = tx + micro(m.target.text);
+    if (noteEnd + 7 + micro(m.target.off) <= rx) {
+      parts.push(svg`<text x=${noteEnd + 7} y=${y + S.note} font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
+      noteEnd += 7 + micro(m.target.off);
+    }
+  } else if (m.pair?.note) {
+    parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
+    noteEnd = tx + micro(m.pair.note) * 1.08;
   }
+  void noteEnd;
 
   // Stages instead of a percentage: the stretch under the first set-point, then one
   // stretch per set-point, each filling on its own. "Full" is not a thing here; what
@@ -292,10 +331,10 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     parts.push(svg`<text x=${tx} y=${y + S.scale} font-size=${S.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
     parts.push(svg`<text x=${rx} y=${y + S.scale} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
     if (style.gauge === "bar") {
-      const guardR = bw - m.level.scale[1].length * S.micro * 0.56 - 6;
-      let taken = m.level.scale[0].length * S.micro * 0.56 + 6;
+      const guardR = bw - textWidth(m.level.scale[1], S.micro) - 6;
+      let taken = textWidth(m.level.scale[0], S.micro) + 6;
       for (const mark of m.level.marks) {
-        const half = (mark.name.length * S.micro * 0.56) / 2;
+        const half = (textWidth(mark.name, S.micro)) / 2;
         const at = bw * mark.at;
         if (at - half < taken || at + half > guardR) continue;
         taken = at + half + 5;
@@ -317,7 +356,7 @@ function row(
   wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }>,
   y: number, size: number, tone: string, left: number, right: number
 ) {
-  const width = (s: string) => s.length * size * 0.56;
+  const width = (s: string) => textWidth(s, size);
   const span = (w: { x: number; text: string; anchor: string }): [number, number] => {
     const tw = width(w.text);
     return w.anchor === "start" ? [w.x, w.x + tw] : w.anchor === "end" ? [w.x - tw, w.x] : [w.x - tw / 2, w.x + tw / 2];

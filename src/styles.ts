@@ -63,7 +63,7 @@ export const cardStyles = css`
   }
 
   .title {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
     margin: 0;
   }
@@ -73,7 +73,7 @@ export const cardStyles = css`
     align-items: center;
     gap: 6px;
     font-family: var(--ho-mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
     letter-spacing: 0.03em;
     padding: 4px 9px;
     border-radius: 999px;
@@ -167,7 +167,7 @@ export const cardStyles = css`
     justify-content: center;
     gap: 4px 14px;
     font-family: var(--ho-mono);
-    font-size: 11.5px;
+    font-size: 12.5px;
     color: var(--ho-muted);
     font-variant-numeric: tabular-nums;
   }
