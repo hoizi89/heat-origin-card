@@ -164,6 +164,7 @@ export const cardStyles = css`
     display: flex;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: center;
     gap: 4px 14px;
     font-family: var(--ho-mono);
     font-size: 11.5px;
