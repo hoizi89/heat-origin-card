@@ -214,6 +214,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     const first = m.level.marks[0];
     const names = [first ? [m.level.under, first.name].filter(Boolean).join(" ") : "", ...m.level.marks.map((k) => k.name)];
     const wanted: Array<{ x: number; text: string; anchor: "middle" | "end" }> = [];
+    let underLabel: { x: number; text: string; anchor: "end" } | undefined;
     const fillX = tx + bw * m.level.top;
     bounds.slice(0, -1).forEach((b, i) => {
       const last = i === bounds.length - 2;
@@ -228,11 +229,16 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
         parts.push(svg`<rect x=${x0.toFixed(1)} y=${by} width=${(to - x0).toFixed(1)} height=${bh} rx="2"
           fill=${cold ? t.muted : m.tone} opacity=${cold ? 0.55 : to < x1 ? 0.7 : 1}/>`);
       }
-      if (names[i]) wanted.push({ x: (x0 + x1) / 2, text: names[i], anchor: "middle" });
+      // "Below Eco" is wider than its stretch, so it hangs off the stretch's right end
+      // into the icon's column, which is empty in this row.
+      if (i === 0 && names[0]) underLabel = { x: x1 - 3, text: names[0], anchor: "end" };
+      else if (names[i]) wanted.push({ x: (x0 + x1) / 2, text: names[i], anchor: "middle" });
     });
+    // The set-points' own names come first, the top of the scale next, "below Eco" last:
+    // where the box is narrow, that is the order in which they may be dropped.
     if (m.level.ceilingName) wanted.push({ x: rx, text: m.level.ceilingName, anchor: "end" });
-    // The set-points' own names come first; "below Eco" is the one to drop where the box is narrow.
-    parts.push(...row([...wanted.slice(1), ...wanted.slice(0, 1)], y + S.scale, S.micro, t.muted));
+    if (underLabel) wanted.push(underLabel);
+    parts.push(...row(wanted, y + S.scale, S.micro, t.muted, x + 4, x + w - 4));
   }
 
   // The bar as the scale itself, coloured from cold to the store's own tone, and a
@@ -255,7 +261,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     for (const mark of m.level.marks) wanted.push({ x: tx + bw * mark.at, text: mark.name, anchor: "middle" });
     const end = [m.level.ceilingName, style.scale ? m.level.scale?.[1] : undefined].filter(Boolean).join(" ");
     if (end) wanted.push({ x: rx, text: end, anchor: "end" });
-    parts.push(...row(wanted, y + S.scale, S.micro, t.muted));
+    parts.push(...row(wanted, y + S.scale, S.micro, t.muted, x + 4, x + w - 4));
   }
 
   if (m.level && style.gauge === "bar") {
@@ -296,22 +302,24 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
 }
 
 /**
- * One row of small words, each where it belongs, and none on top of another: the ends
- * are placed first, then the rest in the order given, and whatever would collide is
- * left out — the box's tooltip carries every name anyway.
+ * One row of small words, each where it belongs, and none on top of another: they are
+ * placed in the order given, and whatever would collide with one already there, or
+ * leave the box, is left out — the box's tooltip carries every name anyway.
  */
-function row(wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }>, y: number, size: number, tone: string) {
+function row(
+  wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }>,
+  y: number, size: number, tone: string, left: number, right: number
+) {
   const width = (s: string) => s.length * size * 0.56;
   const span = (w: { x: number; text: string; anchor: string }): [number, number] => {
     const tw = width(w.text);
     return w.anchor === "start" ? [w.x, w.x + tw] : w.anchor === "end" ? [w.x - tw, w.x] : [w.x - tw / 2, w.x + tw / 2];
   };
-  const ends = wanted.filter((w) => w.anchor !== "middle");
-  const middles = wanted.filter((w) => w.anchor === "middle");
-  const placed: Array<[number, number]> = ends.map(span);
-  const out = [...ends];
-  for (const w of middles) {
+  const placed: Array<[number, number]> = [];
+  const out: typeof wanted = [];
+  for (const w of wanted) {
     const s = span(w);
+    if (s[0] < left || s[1] > right) continue;
     if (placed.some(([a, b]) => s[0] < b + 4 && s[1] > a - 4)) continue;
     placed.push(s);
     out.push(w);
