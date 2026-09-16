@@ -36,7 +36,11 @@ export type CentreValue = "heat" | "power" | "both";
 /** How much of the foot line is kept. */
 export type FootStyle = "full" | "no_spread" | "drive" | "none";
 /** What is drawn while a buffer carries the circuits on its own. */
-export type BufferLine = "range" | "line" | "named" | "none";
+export type BufferLine = "range" | "line" | "none";
+/** How a running circuit's box is arranged: what stands right of the room, and what under it. */
+export type RunningFace = "pair" | "quiet" | "headline" | "flow" | "stack";
+/** What a discharging store writes where its word would stand. */
+export type StoreHead = "word" | "left" | "draw";
 /** Where the ambient heat comes from. */
 export type HeatSource = "air" | "ground" | "water";
 /** Where the electricity comes from right now. */
@@ -182,8 +186,17 @@ export interface FlowOptions {
   foot?: FootStyle;
   /** While the heat pump stands: the day's starts, running time and performance factor in place of the last run. */
   balance?: boolean;
-  /** While a buffer carries the circuits alone: the line with its remaining time, the line alone, both plus "from buffer" in the circuit's box, or nothing. */
-  buffer_line?: BufferLine;
+  /** While a buffer carries the circuits alone: the line with its remaining time, the line alone, or nothing. `named` from 1.5 reads as `range`. */
+  buffer_line?: BufferLine | "named";
+  /**
+   * A running circuit, right of its room: `pair` the flow and what the curve wants of
+   * it, return and spread under; `quiet` the same with nothing under; `headline` the
+   * curve's ask as the word above, flow and return right; `flow` the flow as the figure
+   * with the room beside it; `stack` flow, curve and return in three rows.
+   */
+  running?: RunningFace;
+  /** A discharging store's word: `word` says discharging, `left` how long it can keep this up, `draw` the power going out and where to. */
+  store_head?: StoreHead;
   /** A resting box keeps its symbol in its own colour instead of greying out with its state. */
   rest_colour?: boolean;
 
@@ -254,6 +267,8 @@ export interface ResolvedFlow {
   foot: FootStyle;
   balance: boolean;
   buffer_line: BufferLine;
+  running: RunningFace;
+  store_head: StoreHead;
   rest_colour: boolean;
 }
 

@@ -43,7 +43,8 @@ describe("configuration", () => {
     expect(resolveConfig({ ...bare, flow: { resting: "curve" } }).flow.curve).toBe(true);
     expect(resolveConfig({ ...bare, flow: { ring: "both" } }).flow.ring).toBe("sun");
     expect(resolveConfig({ ...bare, flow: { bypass: false } }).flow.buffer_line).toBe("none");
-    expect(resolveConfig({ ...bare, flow: { origin: true } }).flow.buffer_line).toBe("named");
+    expect(resolveConfig({ ...bare, flow: { origin: true } }).flow.buffer_line).toBe("range");
+    expect(resolveConfig({ ...bare, flow: { buffer_line: "named" } }).flow.buffer_line).toBe("range");
     expect(resolveConfig({ ...bare, flow: { trend: true } }).flow.trend).toBe("rate");
     // 0.9 wrote the foot in full with the spread switched off beside it; that is a foot without the spread.
     expect(resolveConfig({ ...bare, flow: { foot: "full", spread: false } }).flow.foot).toBe("no_spread");

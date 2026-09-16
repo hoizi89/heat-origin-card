@@ -153,7 +153,8 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   const labelRoom = rx - tx - (m.labelRight ? spaced(m.labelRight) + 8 : 0);
   let shown = m.label;
   while (shown.length > 3 && spaced(shown) > labelRoom) shown = `${shown.replace(/…$/, "").slice(0, -1).trimEnd()}…`;
-  parts.push(label(shown, tx, "start", m.labelTone ?? t.muted));
+  const labelPart = label(shown, tx, "start", m.labelTone ?? t.muted);
+  parts.push(labelPart);
   if (m.labelRight) parts.push(label(m.labelRight, rx, "end", t.muted));
 
   parts.push(svg`<text x=${tx} y=${y + S.val} font-size=${S.figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
@@ -204,6 +205,12 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (m.pair) {
     // The arrow steps back far enough for whatever figure stands beside it.
     const ax = rx - Math.max(28, textWidth(m.pair.up, S.small) + 11);
+    // The word above must end before the arrow, or it runs into the figure's row.
+    if (shown !== m.label || spaced(shown) > ax - 8 - tx) {
+      let cut = m.label;
+      while (cut.length > 3 && spaced(cut) > ax - 8 - tx) cut = `${cut.replace(/…$/, "").slice(0, -1).trimEnd()}…`;
+      if (cut !== shown) parts.splice(parts.findIndex((p) => p === labelPart), 1, label(cut, tx, "start", m.labelTone ?? t.muted));
+    }
     // The spread sits beside the figure, in the gap before the arrow, where a wide box
     // has room for it and a narrow one has not; the row below stays with the room.
     if (m.pair.spread) {
@@ -212,8 +219,10 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
         parts.push(svg`<text x=${sx.toFixed(1)} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.pair.spread}</text>`);
       }
     }
-    parts.push(arrow(ax, y + S.aUp, true, tone));
-    parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
+    if (m.pair.up) {
+      parts.push(arrow(ax, y + S.aUp, true, tone));
+      parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
+    }
     if (m.pair.curve) {
       // At rest a return line is a number with nothing behind it. What the curve wants
       // is the figure that still means something, so it takes that place and says so —
@@ -223,6 +232,11 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.curve}</text>`);
       if (m.pair.curveLabel && labelX - labelW > tx + textWidth(m.value, S.figure) + 6) {
         parts.push(svg`<text x=${labelX} y=${y + S.down} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.pair.curveLabel}</text>`);
+      }
+      // Both the curve's ask and the return: the return takes a third row under them.
+      if (m.pair.down) {
+        parts.push(arrow(ax, y + S.aDown + 17, false, t.muted));
+        parts.push(svg`<text x=${rx} y=${y + S.down + 17} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.down}</text>`);
       }
     } else if (m.pair.down) {
       parts.push(arrow(ax, y + S.aDown, false, t.muted));

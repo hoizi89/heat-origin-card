@@ -608,8 +608,19 @@ export class HeatOriginCard extends LitElement {
       // has better news than the word: how long it can keep this up, carried forward from
       // its own measured fall, marked as the estimate it is. With nothing to report, the
       // store's own name is worth more there than the word "top" on every box.
-      const lasts = draining ? this._lasts(store, floor) : undefined;
-      const word = charging ? this._t("flow.charging") : draining ? (lasts ? `≈ ${lasts}` : this._t("flow.discharging")) : store.name;
+      const head = config.flow.store_head;
+      const lasts = draining && head === "left" ? this._lasts(store, floor) : undefined;
+      const kw = draining && head === "draw" ? this._draw(store) : undefined;
+      const to = draining ? carried!.circuits.map((i) => config.circuits[i]?.short).filter(Boolean).join("+") : "";
+      const word = charging
+        ? this._t("flow.charging")
+        : !draining
+          ? store.name
+          : head === "left" && lasts
+            ? `≈ ${lasts}`
+            : head === "draw"
+              ? `${kw === undefined ? this._t("flow.discharging") : `${formatPower(kw, locale)} kW`} → ${to}`
+              : this._t("flow.discharging");
       // Which way the store is going, off a whole hour: a tenth of a kelvin at a time is
       // all a resting buffer moves, and the arrow says "holding" rather than nothing.
       const drift = config.flow.trend !== "none" ? this._drift(store) : undefined;
@@ -652,7 +663,7 @@ export class HeatOriginCard extends LitElement {
       };
     });
 
-    const circuits: BoxModel[] = config.circuits.map((circuit, index) => {
+    const circuits: BoxModel[] = config.circuits.map((circuit) => {
       const raw = stateOf(this.hass, circuit.state)?.state;
       const active = this._circuitActive(circuit);
       const room = this._num(circuit.room);
@@ -660,11 +671,18 @@ export class HeatOriginCard extends LitElement {
       const ret = this._num(circuit.return);
       const cooling = raw ? /cool|kühl|cc-/i.test(raw) : false;
       const tone = circuit.kind === "circulation" ? TONE.hot_water : cooling ? TONE.cooling : TONE.heating;
-      const buffered = Boolean(carried?.circuits.includes(index));
       const digits = (v: number | undefined) => (v === undefined ? "–" : `${formatTemp(v, locale)}°`);
       const spread = active && flow !== undefined && ret !== undefined ? `Δ ${this._one(flow - ret)} K` : undefined;
-      const origin = buffered && config.flow.buffer_line === "named" ? this._t("flow.from_buffer") : undefined;
       const resting = circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.off");
+      // Running, the box's word is what the circuit does and since when: "HEIZT · 21:40".
+      const changed = stateOf(this.hass, circuit.pump ?? circuit.state)?.last_changed;
+      const sinceAt = changed ? Date.parse(changed) : NaN;
+      const since = Number.isFinite(sinceAt) && Date.now() - sinceAt < DAY ? ` · ${clock(new Date(sinceAt), locale)}` : "";
+      const doing = `${circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.running")}${since}`;
+      // What the heating curve wants of the flow, and how far the flow is from it.
+      const curveAll = this._num(circuit.curve_flow);
+      const curveOff = curveAll !== undefined && flow !== undefined ? flow - curveAll : undefined;
+      const signed = (off: number) => `${off > 0 ? "+" : off < 0 ? "−" : ""}${this._one(Math.abs(off))} K`;
 
       // Twenty-five degrees in a room is neither good nor bad until something says what
       // was wanted there. The heat pump knows; the card only had to ask it.
@@ -684,29 +702,69 @@ export class HeatOriginCard extends LitElement {
 
       // A return line at rest is a number with nothing behind it. What the heating curve
       // is asking for is the one of the two that still says something.
-      const curveT = !active && config.flow.curve ? this._num(circuit.curve_flow) : undefined;
+      const curveT = !active && config.flow.curve ? curveAll : undefined;
 
       // The room is what the circuit is for; flow and return are how it gets there.
       if (face !== "flow" && room !== undefined) {
-        return {
-          name: circuit.name,
-          icon: circuit.icon,
-          short: circuit.short,
-          tone,
-          on: active,
-          label: (origin ?? (active ? this._t("flow.room") : resting)).toUpperCase(),
-          labelTone: origin ? tone : undefined,
-          value: digits(room),
+        const base = { name: circuit.name, icon: circuit.icon, short: circuit.short, tone, on: active };
+        if (!active) {
           // A circuit at rest moves no water, so its flow and return are standing figures
           // that say nothing. The room and what it was asked for are the whole story; the
           // curve's ask comes in beside the flow only when somebody wants it.
-          pair: active
-            ? { up: digits(flow), down: digits(ret), note: buffered && !origin ? this._t("flow.bypass") : undefined, spread }
-            : curveT === undefined
-              ? undefined
-              : { up: digits(flow), curve: digits(curveT), curveLabel: this._t("flow.curve") },
-          target,
-          hint: circuit.name
+          return {
+            ...base,
+            label: resting.toUpperCase(),
+            value: digits(room),
+            pair: curveT === undefined ? undefined : { up: digits(flow), curve: digits(curveT), curveLabel: this._t("flow.curve") },
+            target,
+            hint: circuit.name
+          };
+        }
+        // Running, the room's target explains nothing — the circuit is doing what it
+        // can — so the row goes to the flow and what the curve wants of it, in one of
+        // five arrangements. The return and the spread are in the tooltip whichever.
+        const view = config.flow.running;
+        const rl = ret === undefined ? "" : `${this._t("flow.rl")} ${digits(ret)}`;
+        const detail = [rl, spread].filter(Boolean).join(" · ");
+        const curveText = curveAll === undefined ? undefined : `${this._t("flow.curve")} ${digits(curveAll)}`;
+        const hint = [circuit.name, doing, detail, curveText && curveOff !== undefined ? `${curveText} ${signed(curveOff)}` : ""].filter(Boolean).join(" · ");
+        const flowPair = (extra: Partial<NonNullable<BoxModel["pair"]>> = {}) =>
+          curveAll === undefined
+            ? { up: digits(flow), down: digits(ret), ...extra }
+            : { up: digits(flow), curve: digits(curveAll), curveLabel: this._t("flow.curve"), ...extra };
+        if (view === "flow") {
+          return {
+            ...base,
+            label: doing.toUpperCase(),
+            labelRight: this._t("flow.room"),
+            value: digits(flow),
+            valueRight: digits(room),
+            pair: { up: "", spread },
+            target: curveText && curveOff !== undefined ? { text: curveText, off: signed(curveOff), tone: MUTED } : undefined,
+            hint
+          };
+        }
+        if (view === "headline") {
+          return {
+            ...base,
+            label: (curveText ?? doing).toUpperCase(),
+            labelTone: curveText ? "var(--ho-warn)" : undefined,
+            value: digits(room),
+            pair: { up: digits(flow), down: digits(ret), spread },
+            hint
+          };
+        }
+        return {
+          ...base,
+          label: doing.toUpperCase(),
+          value: digits(room),
+          pair:
+            view === "stack"
+              ? flowPair({ down: digits(ret) })
+              : view === "pair"
+                ? flowPair({ note: detail || undefined })
+                : flowPair(),
+          hint
         };
       }
 

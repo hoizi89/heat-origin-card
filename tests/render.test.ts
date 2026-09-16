@@ -233,6 +233,7 @@ describe("the flow", () => {
       };
       return hass;
     };
+    const draw = await mount({ ...FULL_CONFIG, flow: { store_head: "draw" } }, falling(2));
     const slow = await mount(FULL_CONFIG, falling(0.6));
     const label = (root: ShadowRoot) => {
       const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("Puffer")) as Element;
@@ -244,6 +245,43 @@ describe("the flow", () => {
     expect(label(fast.root)).toContain("≈ NOCH 10 H 50");
     expect(fast.root.querySelector(".chip")?.textContent).toContain("noch 10 h 50");
     expect([...fast.root.querySelectorAll(".section svg title")].some((t) => t.textContent?.includes("hochgerechnet"))).toBe(true);
+    // 300 litres falling 2 K/h is 0,70 kW, and it goes to the storey that takes it.
+    expect(label(draw.root)).toContain("0,70 KW → EG");
+    const word = await mount({ ...FULL_CONFIG, flow: { store_head: "word" } }, falling(2));
+    expect(label(word.root)).toContain("ENTLÄDT");
+    expect(label(word.root)).not.toContain("NOCH");
+  });
+
+  it("arranges a running circuit's box five ways, the room's target in none of them, and says since when", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": {
+        entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {}, last_changed: new Date(Date.now() - 3600000).toISOString()
+      }
+    });
+    const box = async (running: "pair" | "quiet" | "headline" | "flow" | "stack") => {
+      const { root } = await mount({ ...FULL_CONFIG, flow: { running } }, hass);
+      // The words on the box, not the tooltip: the tooltip carries everything, whichever view.
+      const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("FBH EG")) as Element;
+      return [...g.querySelectorAll("text")].map((t) => t.textContent?.trim()).filter(Boolean).join(" ");
+    };
+    const pair = await box("pair");
+    expect(pair).toMatch(/HEIZT · \d\d:\d\d/);
+    expect(pair).toContain("25,8° 30,6° VL-Soll");
+    expect(pair).toContain("RL 24,7° · Δ 1,1 K");
+    expect(pair).not.toContain("Soll 22,5°");
+    const quiet = await box("quiet");
+    expect(quiet).toContain("30,6°");
+    expect(quiet).not.toContain("RL");
+    expect(quiet).not.toContain("Δ");
+    const headline = await box("headline");
+    expect(headline).toContain("VL-SOLL 30,6°");
+    expect(headline).toContain("24,7°");
+    expect(headline).toContain("Δ 1,1 K");
+    const flow = await box("flow");
+    expect(flow).toContain("Raum");
+    expect(flow).toContain("VL-Soll 30,6° −4,8 K");
+    const stack = await box("stack");
+    expect(stack).toContain("25,8° 30,6° VL-Soll 24,7°");
   });
 
   it("does not believe a circuit that says heating while its water sits at room temperature", async () => {

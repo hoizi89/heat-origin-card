@@ -61,7 +61,9 @@ export const CHOICES = {
   ring: ["sun", "plain", "shares"],
   centre: ["heat", "power", "both"],
   foot: ["full", "no_spread", "drive", "none"],
-  buffer_line: ["range", "line", "named", "none"]
+  buffer_line: ["range", "line", "none"],
+  running: ["pair", "quiet", "headline", "flow", "stack"],
+  store_head: ["word", "left", "draw"]
 } as const;
 
 /** The switches: two looks each. All but the curve are on by default. */
@@ -73,7 +75,7 @@ export const SWITCHES = ["curve", "scale", "balance", "rest_colour"] as const;
  */
 function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
   const low = flow.detail === "low";
-  const legacyBuffer = flow.bypass === false ? "none" : flow.origin ? "named" : flow.range === false ? "line" : "range";
+  const legacyBuffer = flow.bypass === false ? "none" : flow.range === false ? "line" : "range";
   const legacyFoot = low ? "drive" : flow.spread === false ? "no_spread" : "full";
   const legacyTrend = typeof flow.trend === "boolean" ? (flow.trend ? "rate" : "none") : undefined;
   // 1.0.0 had the dial's two ends as `ring: both|clock` plus `dial`; 0.9 as `sun`.
@@ -95,7 +97,10 @@ function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
     // A foot asked for in full with the spread switched off, as 0.9 wrote it, is a foot without the spread.
     foot: flow.foot === "full" && flow.spread === false ? "no_spread" : oneOf(flow.foot, CHOICES.foot, legacyFoot),
     balance: on(flow.balance, flow.idle_foot, "last"),
+    // 1.5 had a fourth word, `named`, that wrote "from the buffer" into the circuit; the line says it.
     buffer_line: oneOf(flow.buffer_line, CHOICES.buffer_line, legacyBuffer),
+    running: oneOf(flow.running, CHOICES.running, "pair"),
+    store_head: oneOf(flow.store_head, CHOICES.store_head, "left"),
     rest_colour: on(flow.rest_colour, flow.rest, "grey")
   };
 }
@@ -274,12 +279,12 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     // is a list, one with two a switch; the helper under each says when it is on the
     // screen at all.
     { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
-    { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), toggle("curve")] },
+    { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), choice("running"), toggle("curve")] },
     {
       type: "expandable",
       name: "flow",
       title: t("editor.group_stores"),
-      schema: [choice("gauge"), toggle("scale"), choice("trend"), choice("buffer_line")]
+      schema: [choice("gauge"), toggle("scale"), choice("trend"), choice("buffer_line"), choice("store_head")]
     },
     {
       type: "expandable",
@@ -293,12 +298,12 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     "title", "layout", "shape", "font", "source", "wide_from", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
     "house_power", "grid_power", "battery_power", "cop", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
-    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance",
+    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance", "running", "store_head",
     "name", "kind", "top", "bottom", "volume", "usable_min", "usable_max", "circulation", "circulation_pump", "due_at",
     "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
+  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance"];
 
   return {
     schema,
