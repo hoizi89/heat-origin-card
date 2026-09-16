@@ -259,7 +259,7 @@ export class HeatOriginCard extends LitElement {
     const config = this._config as ResolvedConfig;
     let warmest: number | undefined;
     for (const circuit of config.circuits) {
-      if (circuit.kind !== "heating" || !this._circuitActive(circuit)) continue;
+      if (circuit.kind !== "heating" || !this._circuitTaking(circuit)) continue;
       const flow = this._num(circuit.flow ?? circuit.temperature);
       if (flow !== undefined && (warmest === undefined || flow > warmest)) warmest = flow;
     }
@@ -355,19 +355,25 @@ export class HeatOriginCard extends LitElement {
     return this._t("store.due_in", { mark, span: this._spanWords(hours) });
   }
 
-  /**
-   * Whether a circuit is taking heat. The state or the pump says it wants to; the water
-   * says whether it does. A pump can run against a closed mixer — the state reads
-   * HEATING while flow and return sit at room temperature — and then no heat moves,
-   * the buffer is not carrying anything, and the circuit is not warming the house.
-   */
+  /** What the circuit says it is doing: its state word, or its pump. This is what its box shows. */
   private _circuitActive(circuit: ResolvedConfig["circuits"][number]): boolean {
     const raw = stateOf(this.hass, circuit.state)?.state;
     const pumpOn = circuit.pump ? this._isOn(circuit.pump) : undefined;
-    if (!(pumpOn ?? circuitActive(raw, circuit.active))) return false;
+    return pumpOn ?? circuitActive(raw, circuit.active);
+  }
+
+  /**
+   * Whether heat is actually moving into the circuit. The state says it wants to; the
+   * water says whether it does. A pump can run against a closed mixer — the state reads
+   * HEATING while flow and return sit at room temperature — and then the buffer is
+   * carrying nothing and its scale must not take that flow for its floor. Half a
+   * kelvin of spread: a closed mixer hovers within three tenths of nothing, a floor
+   * that heats runs two to five.
+   */
+  private _circuitTaking(circuit: ResolvedConfig["circuits"][number]): boolean {
+    if (!this._circuitActive(circuit)) return false;
     const flow = this._num(circuit.flow);
     const ret = this._num(circuit.return);
-    // Half a kelvin: a closed mixer hovers within three tenths of nothing, a floor that heats runs two to five.
     return flow === undefined || ret === undefined || flow - ret >= 0.5;
   }
 
@@ -384,7 +390,7 @@ export class HeatOriginCard extends LitElement {
     if (this._mode().kind === "heating") return undefined;
     const circuits: number[] = [];
     config.circuits.forEach((circuit, index) => {
-      if (circuit.kind === "heating" && this._circuitActive(circuit)) circuits.push(index);
+      if (circuit.kind === "heating" && this._circuitTaking(circuit)) circuits.push(index);
     });
     return circuits.length ? { store, circuits } : undefined;
   }
@@ -949,7 +955,7 @@ export class HeatOriginCard extends LitElement {
         surface: PALETTE.surface,
         track: PALETTE.track,
         live: Boolean(carried) || (running && mode.kind === "heating"),
-        taking: circuits.map((c) => c.on)
+        taking: config.circuits.map((c) => this._circuitTaking(c))
       }));
     }
 
