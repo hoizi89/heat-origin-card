@@ -108,6 +108,7 @@ const TREND_WINDOW = 20 * 60 * 1000;
  * around the drawing.
  */
 const COL_W = 171;
+const BOX_H_COL = 74;
 const COL_R = 196;
 const COL_GAP = 8;
 const R_COL_PUMP = 44;
@@ -612,7 +613,9 @@ export class HeatOriginCard extends LitElement {
           x.value !== undefined && x.value > floor && x.value < ceiling)
         .map((x) => ({ at: at(x.value), name: this._t(`mark.${x.key}`) }));
 
-      const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : this._t("flow.top");
+      // Charging or discharging is the news and takes the slot. With nothing to report,
+      // the store's own name is worth more there than the word "top" on every box.
+      const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : store.name;
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
       return {
         name: store.name,
@@ -864,10 +867,10 @@ export class HeatOriginCard extends LitElement {
 
     const cx = 1 + COL_W / 2;
     const cy = 6 + reach;
-    const rightY = (i: number) => 6 + i * (BOX_H + COL_GAP);
-    const leftY = (i: number) => cy + reach + 22 + i * (BOX_H + COL_GAP);
+    const rightY = (i: number) => 6 + i * (BOX_H_COL + COL_GAP);
+    const leftY = (i: number) => cy + reach + 22 + i * (BOX_H_COL + COL_GAP);
     const rightCount = bufIx.length + circuits.length;
-    const H = Math.max(rightY(rightCount - 1) + BOX_H, leftY(hotIx.length - 1) + BOX_H, cy + reach + 6) + 6;
+    const H = Math.max(rightY(rightCount - 1) + BOX_H_COL, leftY(hotIx.length - 1) + BOX_H_COL, cy + reach + 6) + 6;
 
     const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low" };
     const parts: unknown[] = [];
@@ -883,7 +886,7 @@ export class HeatOriginCard extends LitElement {
     });
 
     // The pump to the head of the heating column.
-    const headY = rightY(0) + BOX_H / 2;
+    const headY = rightY(0) + BOX_H_COL / 2;
     parts.push(connector(cx + reach, cy, COL_R, headY, 1, {
       tone: bufIx.length ? STORE_TONE.buffer : TONE.heating,
       fed: running && mode.kind === "heating",
@@ -894,7 +897,7 @@ export class HeatOriginCard extends LitElement {
     }));
 
     // The manifold: every circuit hangs on one upright under the buffer.
-    const circuitYs = circuits.map((_, i) => rightY(bufIx.length + i) + BOX_H / 2);
+    const circuitYs = circuits.map((_, i) => rightY(bufIx.length + i) + BOX_H_COL / 2);
     if (circuitYs.length) {
       const anyTaking = circuits.some((c) => c.on);
       parts.push(spine(COL_R, headY, COL_R, circuitYs, {
@@ -908,7 +911,7 @@ export class HeatOriginCard extends LitElement {
     let uid = 0;
     const draw = (model: BoxModel, x: number, y: number, w: number, entity: string | undefined) => {
       uid += 1;
-      parts.push(box(model, x, y, w, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
+      parts.push(box(model, x, y, w, BOX_H_COL, PALETTE, style, uid, () => this._moreInfo(entity)));
     };
     hotIx.forEach((x, k) => draw(stores[x.i], 1, leftY(k), COL_W, x.st.top));
     bufIx.forEach((x, k) => draw(stores[x.i], COL_R, rightY(k), DRAW_W - COL_R - 1, x.st.top));
@@ -1001,7 +1004,7 @@ export class HeatOriginCard extends LitElement {
       uid += 1;
       const circuit = config.circuits[i];
       const entity = circuit?.pump ?? circuit?.state ?? circuit?.flow ?? circuit?.temperature;
-      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
+      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H_COL, PALETTE, style, uid, () => this._moreInfo(entity)));
     });
 
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
@@ -1073,15 +1076,16 @@ export class HeatOriginCard extends LitElement {
       // enough at that height, the word itself goes there; the symbol is the fallback,
       // and it has to be shifted by half its own width to sit on the middle.
       const word = this._t(`kind.${last.kind}`);
+      const sec = r >= 40 ? TYPE.small : 10;
       const chord = 2 * Math.sqrt(Math.max(0, r * r - 21 * 21)) - 8;
-      const fits = word.length * TYPE.small * 0.56 <= chord;
+      const fits = word.length * sec * 0.56 <= chord;
       const mark = last.kind === "hot_water" ? "water" : last.kind === "heating" ? "flame" : undefined;
       return svg`
         <text x=${cx} y=${cy - 12} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.08em"
           fill=${PALETTE.muted}>${this._t("flow.last").toUpperCase()}</text>
         <text x=${cx} y=${cy + 6} text-anchor="middle" font-size=${TYPE.figure} font-weight="700" fill=${PALETTE.ink}>${short}</text>
         ${fits
-          ? svg`<text x=${cx} y=${cy + 21} text-anchor="middle" font-size=${TYPE.small} font-weight="600" fill=${TONE[last.kind]}>${word}</text>`
+          ? svg`<text x=${cx} y=${cy + 21} text-anchor="middle" font-size=${sec} font-weight="600" fill=${TONE[last.kind]}>${word}</text>`
           : mark
             ? iconMark(mark, cx - 8, cy + 11, TONE[last.kind])
             : nothing}`;
@@ -1097,11 +1101,11 @@ export class HeatOriginCard extends LitElement {
         : `COP ${formatNumber(cop, locale, 1)}`;
     const thirdTone = centre === "both" ? "var(--ho-power)" : PALETTE.ink;
     return svg`
-      <text x=${cx} y=${cy - 4} text-anchor="middle" font-size=${TYPE.hero} font-weight="700"
+      <text x=${cx} y=${cy - 4} text-anchor="middle" font-size=${r >= 40 ? TYPE.hero : 21} font-weight="700"
         fill=${PALETTE.ink}>${formatNumber(big, locale, big < 10 ? 1 : 0)}</text>
       <text x=${cx} y=${cy + 7} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.06em" fill=${PALETTE.muted}>${unit}</text>
       ${third
-        ? svg`<text x=${cx} y=${cy + 20} text-anchor="middle" font-size=${TYPE.small} font-weight="600" fill=${thirdTone}>${third}</text>`
+        ? svg`<text x=${cx} y=${cy + 20} text-anchor="middle" font-size=${r >= 40 ? TYPE.small : 10} font-weight="600" fill=${thirdTone}>${third}</text>`
         : nothing}`;
   }
 

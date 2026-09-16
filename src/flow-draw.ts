@@ -56,12 +56,24 @@ export const T = { micro: 8, small: 10, figure: 13.5, hero: 21 };
 
 const R_BOX = 9;
 
+/**
+ * How large a box writes. A box with room to breathe takes the larger scale; the
+ * narrower arrangement keeps the smaller one, where a step up would put the room
+ * temperature into the arrow beside it.
+ */
+function scaleOf(h: number) {
+  return h >= 70
+    ? { micro: 9, small: 11, figure: 15, lab: 21, val: 43, icon: 19, short: 56, bar: 50, barH: 5, scale: 68, up: 26, down: 43, aUp: 23, aDown: 40, note: 66 }
+    : { micro: 8, small: 10, figure: 13.5, lab: 19, val: 38, icon: 17, short: 50, bar: 45, barH: 4.5, scale: 59, up: 23, down: 38, aUp: 20, aDown: 35, note: 57 };
+}
+
 /** A box: symbol and storey on the left, two rows of figures, and a foot of its own. */
 export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: Tone, style: {
   labels: "short" | "icon" | "name";
   gauge: "bar" | "box";
   scale: boolean;
 }, uid: number, click?: () => void): SVGTemplateResult {
+  const S = scaleOf(h);
   const tone = m.on ? m.tone : t.muted;
   const fill = m.on ? `color-mix(in srgb, ${m.tone} 15%, ${t.surface})` : t.surface;
   const parts: unknown[] = [
@@ -71,13 +83,13 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (style.labels === "name") {
     const mid = y + h / 2;
     // What the state word on the right leaves over is what the name may use.
-    const room = w - 22 - (m.labelRight ? m.labelRight.length * T.small * 0.56 + 8 : 0);
-    const fits = Math.max(4, Math.floor(room / (12 * 0.56)));
+    const room = w - 22 - (m.labelRight ? m.labelRight.length * S.small * 0.56 + 8 : 0);
+    const fits = Math.max(4, Math.floor(room / (S.figure * 0.56)));
     const shown = m.name.length > fits ? `${m.name.slice(0, fits - 1)}…` : m.name;
-    parts.push(svg`<text x=${x + 11} y=${mid - 5} font-size="12" font-weight="600" fill=${t.ink}>${shown}</text>`);
-    parts.push(svg`<text x=${x + 11} y=${mid + 11} font-size=${T.small} fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
+    parts.push(svg`<text x=${x + 11} y=${mid - 5} font-size=${S.figure - 1.5} font-weight="600" fill=${t.ink}>${shown}</text>`);
+    parts.push(svg`<text x=${x + 11} y=${mid + 12} font-size=${S.small} fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
     if (m.labelRight) {
-      parts.push(svg`<text x=${x + w - 9} y=${mid - 5} text-anchor="end" font-size="9.5" font-weight="700" fill=${m.labelTone ?? t.muted}>${m.labelRight}</text>`);
+      parts.push(svg`<text x=${x + w - 9} y=${mid - 5} text-anchor="end" font-size=${S.small} font-weight="700" fill=${m.labelTone ?? t.muted}>${m.labelRight}</text>`);
     }
     return group(parts, m, click);
   }
@@ -94,20 +106,20 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       </g>`);
   }
 
-  parts.push(icon(m.icon, x + 7, y + 17, tone));
+  parts.push(icon(m.icon, x + 7, y + S.icon, tone));
   if (style.labels === "short" && m.short) {
-    parts.push(svg`<text x=${x + 15} y=${y + 50} text-anchor="middle" font-size=${T.micro} font-weight="700"
+    parts.push(svg`<text x=${x + 15} y=${y + S.short} text-anchor="middle" font-size=${S.micro} font-weight="700"
       letter-spacing="0.06em" fill=${tone}>${m.short}</text>`);
   }
 
   const label = (text: string, xx: number, anchor: string, col: string) =>
-    svg`<text x=${xx} y=${y + 19} text-anchor=${anchor} font-size=${T.micro} font-weight="700" letter-spacing="0.09em" fill=${col}>${text}</text>`;
+    svg`<text x=${xx} y=${y + S.lab} text-anchor=${anchor} font-size=${S.micro} font-weight="700" letter-spacing="0.09em" fill=${col}>${text}</text>`;
   parts.push(label(m.label, tx, "start", m.labelTone ?? t.muted));
   if (m.labelRight) parts.push(label(m.labelRight, rx, "end", t.muted));
 
-  parts.push(svg`<text x=${tx} y=${y + 38} font-size=${T.figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
+  parts.push(svg`<text x=${tx} y=${y + S.val} font-size=${S.figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
   if (m.valueRight !== undefined) {
-    parts.push(svg`<text x=${rx} y=${y + 38} text-anchor="end" font-size=${T.small} font-weight="600"
+    parts.push(svg`<text x=${rx} y=${y + S.val} text-anchor="end" font-size=${S.small} font-weight="600"
       fill=${m.level && m.on ? t.ink : t.muted}>${m.valueRight}</text>`);
   }
 
@@ -115,67 +127,65 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   // and the circulation is the figure that changes most often. It goes there.
   if (m.loop && w >= 150) {
     const lt = m.loop.on ? m.tone : t.muted;
-    const leftEnd = tx + (m.value.length * T.figure * 0.56);
-    const rightStart = m.valueRight === undefined ? rx : rx - (m.valueRight.length * T.small * 0.56);
-    const width = 12 + m.loop.text.length * T.small * 0.56;
+    const leftEnd = tx + m.value.length * S.figure * 0.56;
+    const rightStart = m.valueRight === undefined ? rx : rx - m.valueRight.length * S.small * 0.56;
+    const width = 13 + m.loop.text.length * S.small * 0.56;
     const lx = (leftEnd + rightStart) / 2 - width / 2;
     if (lx > leftEnd + 6 && lx + width < rightStart - 6) {
-      parts.push(icon("loop", lx, y + 30, lt, 0.6));
-      parts.push(svg`<text x=${lx + 13} y=${y + 38} font-size=${T.small} fill=${lt}>${m.loop.text}</text>`);
+      parts.push(icon("loop", lx, y + S.val - 9, lt, 0.65));
+      parts.push(svg`<text x=${lx + 14} y=${y + S.val} font-size=${S.small} fill=${lt}>${m.loop.text}</text>`);
     }
   }
 
   if (m.pair) {
-    const ax = rx - 30;
-    parts.push(arrow(ax, y + 20, true, tone));
-    parts.push(svg`<text x=${rx} y=${y + 23} text-anchor="end" font-size=${T.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
+    // The arrow steps back far enough for whatever figure stands beside it.
+    const ax = rx - Math.max(28, m.pair.up.length * S.small * 0.56 + 11);
+    parts.push(arrow(ax, y + S.aUp, true, tone));
+    parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
     if (m.pair.down) {
-      parts.push(arrow(ax, y + 35, false, t.muted));
-      parts.push(svg`<text x=${rx} y=${y + 38} text-anchor="end" font-size=${T.small} fill=${t.muted}>${m.pair.down}</text>`);
+      parts.push(arrow(ax, y + S.aDown, false, t.muted));
+      parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.down}</text>`);
     }
     if (m.pair.note) {
-      parts.push(svg`<text x=${tx} y=${y + 57} font-size=${T.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
+      parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
     }
     if (m.pair.spread) {
-      parts.push(svg`<text x=${rx} y=${y + 57} text-anchor="end" font-size=${T.micro} fill=${t.muted}>${m.pair.spread}</text>`);
+      parts.push(svg`<text x=${rx} y=${y + S.note} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.pair.spread}</text>`);
     }
   } else if (m.sub) {
-    parts.push(svg`<text x=${tx} y=${y + 57} font-size=${T.micro} fill=${t.muted}>${m.sub}</text>`);
+    parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.sub}</text>`);
   }
 
   if (m.level && style.gauge === "bar") {
     const bw = rx - tx;
-    const by = y + 45;
-    parts.push(svg`<rect x=${tx} y=${by} width=${bw} height="4.5" rx="2.25" fill=${t.track}/>`);
-    parts.push(svg`<rect x=${tx} y=${by} width=${Math.max(2, bw * m.level.top).toFixed(1)} height="4.5" rx="2.25" fill=${m.tone} opacity="0.45"/>`);
+    const by = y + S.bar;
+    parts.push(svg`<rect x=${tx} y=${by} width=${bw} height=${S.barH} rx=${S.barH / 2} fill=${t.track}/>`);
+    parts.push(svg`<rect x=${tx} y=${by} width=${Math.max(2, bw * m.level.top).toFixed(1)} height=${S.barH} rx=${S.barH / 2} fill=${m.tone} opacity="0.45"/>`);
     if (m.level.bottom > 0.01) {
-      parts.push(svg`<rect x=${tx} y=${by} width=${(bw * m.level.bottom).toFixed(1)} height="4.5" rx="2.25" fill=${m.tone}/>`);
+      parts.push(svg`<rect x=${tx} y=${by} width=${(bw * m.level.bottom).toFixed(1)} height=${S.barH} rx=${S.barH / 2} fill=${m.tone}/>`);
     }
     for (const mark of m.level.marks) {
       const mx = (tx + bw * mark.at).toFixed(1);
-      parts.push(svg`<line x1=${mx} x2=${mx} y1=${by - 2} y2=${by + 6.5} stroke=${t.ink} stroke-width="1.2" opacity="0.45"/>`);
+      parts.push(svg`<line x1=${mx} x2=${mx} y1=${by - 2} y2=${by + S.barH + 2} stroke=${t.ink} stroke-width="1.2" opacity="0.45"/>`);
     }
   }
 
-  // A bar without its two ends is a riddle, so the scale is written under it.
+  // A bar without its two ends is a riddle, so the scale is written under it; and a
+  // notch without a name is a line nobody can read, so each set-point writes its own.
   if (m.level && style.scale && m.level.scale) {
     const bw = rx - tx;
-    parts.push(svg`<text x=${tx} y=${y + 59} font-size=${T.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
-    parts.push(svg`<text x=${rx} y=${y + 59} text-anchor="end" font-size=${T.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
-
-    // A notch without a name is a line nobody can read. Each set-point writes its own
-    // name under its own notch, as far as the ends of the scale leave room.
+    parts.push(svg`<text x=${tx} y=${y + S.scale} font-size=${S.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
+    parts.push(svg`<text x=${rx} y=${y + S.scale} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
     if (style.gauge === "bar") {
-      const guard = (m.level.scale[0].length * T.micro * 0.56) + 6;
-      const guardR = bw - (m.level.scale[1].length * T.micro * 0.56) - 6;
-      let taken = guard;
+      const guardR = bw - m.level.scale[1].length * S.micro * 0.56 - 6;
+      let taken = m.level.scale[0].length * S.micro * 0.56 + 6;
       for (const mark of m.level.marks) {
-        const half = (mark.name.length * T.micro * 0.56) / 2;
+        const half = (mark.name.length * S.micro * 0.56) / 2;
         const at = bw * mark.at;
         if (at - half < taken || at + half > guardR) continue;
         taken = at + half + 5;
-        parts.push(svg`<text x=${(tx + at).toFixed(1)} y=${y + 59} text-anchor="middle"
-          font-size=${T.micro} fill=${t.muted}>${mark.name}</text>`);
+        parts.push(svg`<text x=${(tx + at).toFixed(1)} y=${y + S.scale} text-anchor="middle"
+          font-size=${S.micro} fill=${t.muted}>${mark.name}</text>`);
       }
     }
   }
