@@ -64,7 +64,7 @@ export const CHOICES = {
   buffer_line: ["range", "line", "named", "none"]
 } as const;
 
-/** The switches: two looks each, on by default. */
+/** The switches: two looks each. All but the curve are on by default. */
 export const SWITCHES = ["curve", "scale", "balance", "rest_colour"] as const;
 
 /**
@@ -84,7 +84,8 @@ function resolveFlow(flow: FlowOptions): ResolvedFlow {
     extras: flow.extras ?? [],
     labels: oneOf(flow.labels, CHOICES.labels, low ? "icon" : "short"),
     circuit: oneOf(flow.circuit, CHOICES.circuit, flow.target === false ? "room_plain" : "room"),
-    curve: on(flow.curve, flow.resting, "flow"),
+    // Off by default: at rest the room and its target already say why the circuit rests.
+    curve: flow.curve ?? flow.resting === "curve",
     gauge: oneOf(flow.gauge, CHOICES.gauge, "bar"),
     scale: typeof flow.scale === "boolean" ? flow.scale : flow.scale === undefined ? !low : flow.scale !== "hide",
     trend: oneOf(flow.trend, CHOICES.trend, legacyTrend ?? "rate"),

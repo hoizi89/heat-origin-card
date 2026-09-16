@@ -180,13 +180,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       parts.push(arrow(ax, y + S.aDown, false, t.muted));
       parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.down}</text>`);
     }
-    // The room a circuit was asked for turns its own figure from a reading into an
-    // answer: twenty-five degrees is only too warm once something says what was wanted.
-    if (m.target) {
-      parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.target.text}</text>`);
-      parts.push(svg`<text x=${tx + m.target.text.length * S.micro * 0.56 + 7} y=${y + S.note}
-        font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
-    } else if (m.pair.note) {
+    if (m.pair.note && !m.target) {
       parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
     }
     if (m.pair.spread) {
@@ -194,6 +188,15 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     }
   } else if (m.sub) {
     parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.sub}</text>`);
+  }
+
+  // The room a circuit was asked for turns its own figure from a reading into an
+  // answer: twenty-five degrees is only too warm once something says what was wanted.
+  // It stands on its own, whether or not a pair of figures is drawn on the right.
+  if (m.target) {
+    parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.target.text}</text>`);
+    parts.push(svg`<text x=${tx + m.target.text.length * S.micro * 0.56 + 7} y=${y + S.note}
+      font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
   }
 
   if (m.level && style.gauge === "bar") {

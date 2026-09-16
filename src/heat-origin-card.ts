@@ -642,14 +642,14 @@ export class HeatOriginCard extends LitElement {
           label: (origin ?? (active ? this._t("flow.room") : resting)).toUpperCase(),
           labelTone: origin ? tone : undefined,
           value: digits(room),
-          pair: {
-            up: digits(flow),
-            down: active ? digits(ret) : undefined,
-            curve: curveT === undefined ? undefined : digits(curveT),
-            curveLabel: curveT === undefined ? undefined : this._t("flow.curve"),
-            note: buffered && !origin ? this._t("flow.bypass") : undefined,
-            spread
-          },
+          // A circuit at rest moves no water, so its flow and return are standing figures
+          // that say nothing. The room and what it was asked for are the whole story; the
+          // curve's ask comes in beside the flow only when somebody wants it.
+          pair: active
+            ? { up: digits(flow), down: digits(ret), note: buffered && !origin ? this._t("flow.bypass") : undefined, spread }
+            : curveT === undefined
+              ? undefined
+              : { up: digits(flow), curve: digits(curveT), curveLabel: this._t("flow.curve") },
           target,
           hint: circuit.name
         };
@@ -665,7 +665,12 @@ export class HeatOriginCard extends LitElement {
         value: digits(flow),
         labelRight: room === undefined ? undefined : this._t("flow.room"),
         valueRight: room === undefined ? undefined : digits(room),
-        sub: active && ret !== undefined ? `${this._t("flow.rl")} ${formatTemp(ret, locale)}${spread ? ` · ${spread}` : ""}` : undefined,
+        // Running: the return and spread under the flow. Resting, with the curve asked for: its target.
+        sub: active && ret !== undefined
+          ? `${this._t("flow.rl")} ${formatTemp(ret, locale)}${spread ? ` · ${spread}` : ""}`
+          : curveT !== undefined
+            ? `${this._t("flow.curve")} ${digits(curveT)}`
+            : undefined,
         hint: circuit.name
       };
     });

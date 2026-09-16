@@ -95,7 +95,7 @@ flow:
 | `flow.ring` | `sun` | The day's dial with the hours of daylight arcing over it; `plain` without them; `shares` no dial. While it runs, the shares of ambient heat and electricity ring the circle in any case. |
 | `flow.labels` | `short` | Symbol with the storey under it; `icon` for the symbol alone, `name` for the name. |
 | `flow.circuit` | `room` | The room with its target, flow and return beside them; `room_plain` leaves the target off; `flow` puts the flow first. |
-| `flow.curve` | `true` | While a circuit takes no heat, what the heating curve wants of it, as the flow's target in place of the return. |
+| `flow.curve` | `false` | A resting circuit shows its room and the room's target alone — its flow and return are standing water. With this it also shows its flow and, beside it, what the heating curve wants of it. |
 | `flow.gauge` | `bar` | The store's level as a bar in the box's foot; `box` fills the whole box. |
 | `flow.scale` | `true` | Empty and full written under the level. |
 | `flow.trend` | `rate` | Which way a store is going, from the fall the card measures anyway: arrow with the K/h where it fits, `arrow` alone, or `none`. |

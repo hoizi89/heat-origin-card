@@ -106,17 +106,25 @@ describe("the flow", () => {
     expect(t).toContain("+2,0 K");
   });
 
-  it("asks the heating curve what it wants while a circuit rests, as the flow's target, instead of its return", async () => {
+  it("shows a resting circuit its room and target alone: standing water has nothing to say", async () => {
     const { root } = await mount(FULL_CONFIG);
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
-    expect(text(eg as Element)).toContain("30,6° Soll");
+    const t = text(eg as Element);
+    expect(t).toContain("Soll 22,5°");
+    expect(t).not.toContain("25,8°");
+    expect(t).not.toContain("30,6°");
   });
 
-  it("leaves both out when asked for the plain room and no curve", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain", curve: false } });
+  it("asks the heating curve what it wants of a resting circuit when told to, beside the flow it has", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { curve: true } });
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
+    expect(text(eg as Element)).toContain("25,8° 30,6° VL-Soll");
+  });
+
+  it("leaves the target out when asked for the plain room", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain" } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
     expect(text(eg as Element)).not.toContain("Soll");
-    expect(text(eg as Element)).not.toContain("30,6°");
   });
 
   it("gives the day's figures in place of a last run the circle already tells", async () => {
