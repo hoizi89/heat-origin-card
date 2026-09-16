@@ -166,11 +166,18 @@ export function getConfigForm(locale: string) {
   const toggle = (name: (typeof SWITCHES)[number]) => ({ name, selector: { boolean: {} } });
 
   const schema = [
-    { name: "title", selector: { text: {} } },
-    // The layout's words are long; they get the row to themselves.
-    choice("layout"),
-    { type: "grid", schema: [words("shape", ["standard", "compact"]), words("font", ["system", "mono"])] },
-    words("source", ["air", "ground", "water"]),
+    {
+      type: "expandable",
+      title: t("editor.group_general"),
+      expanded: true,
+      schema: [
+        { name: "title", selector: { text: {} } },
+        // The layout's words are long; they get the row to themselves.
+        choice("layout"),
+        { type: "grid", schema: [words("shape", ["standard", "compact"]), words("font", ["system", "mono"])] },
+        words("source", ["air", "ground", "water"])
+      ]
+    },
     {
       type: "expandable",
       name: "entities",
@@ -186,16 +193,23 @@ export function getConfigForm(locale: string) {
         }
       ]
     },
-    // One group per part of the drawing. A choice with three or more looks is a list,
+    // One group per thing in the drawing: the heat pump, the circuits, the stores, and
+    // what every box and the foot share. A choice with three or more looks is a list,
     // one with two a switch; the helper under each says when it is on the screen at all.
     { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
+    { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), toggle("curve")] },
+    {
+      type: "expandable",
+      name: "flow",
+      title: t("editor.group_stores"),
+      schema: [choice("gauge"), toggle("scale"), choice("trend"), choice("buffer_line")]
+    },
     {
       type: "expandable",
       name: "flow",
       title: t("editor.group_boxes"),
-      schema: [choice("labels"), choice("circuit"), toggle("curve"), choice("gauge"), toggle("scale"), choice("trend"), toggle("rest_colour")]
-    },
-    { type: "expandable", name: "flow", title: t("editor.group_lines"), schema: [choice("buffer_line"), choice("foot"), toggle("balance")] }
+      schema: [choice("labels"), toggle("rest_colour"), choice("foot"), toggle("balance")]
+    }
   ];
 
   const labelled = [
@@ -205,7 +219,7 @@ export function getConfigForm(locale: string) {
     "scale", "trend", "rest_colour", "buffer_line", "foot", "balance"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
+  const helped = ["mode", "source", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
 
   return {
     schema,

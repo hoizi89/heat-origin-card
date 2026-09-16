@@ -102,9 +102,12 @@ const en: Table = {
   "editor.heat_today": "Heat today (total)",
   "editor.electric_today": "Electricity today (total)",
 
+  "editor.group_general": "General",
   "editor.group_pump": "The heat pump",
-  "editor.group_boxes": "The boxes",
-  "editor.group_lines": "Lines and foot",
+  "editor.group_circuits": "The heating circuits",
+  "editor.group_stores": "The stores: hot water and buffer",
+  "editor.group_boxes": "Every box, and the foot",
+  "editor.help_source": "Names the ambient heat in the foot while it runs: air, ground or water.",
 
   "editor.centre": "The middle of the circle",
   "editor.centre_heat": "Heat",
@@ -260,9 +263,12 @@ const de: Table = {
   "editor.heat_today": "Wärme heute (gesamt)",
   "editor.electric_today": "Strom heute (gesamt)",
 
+  "editor.group_general": "Allgemein",
   "editor.group_pump": "Die Wärmepumpe",
-  "editor.group_boxes": "Die Kästen",
-  "editor.group_lines": "Linien und Fußzeile",
+  "editor.group_circuits": "Die Heizkreise",
+  "editor.group_stores": "Die Speicher: Warmwasser und Puffer",
+  "editor.group_boxes": "Alle Kästen und die Fußzeile",
+  "editor.help_source": "Benennt die Umweltwärme in der Fußzeile, solange sie läuft: Luft, Erdreich oder Wasser.",
 
   "editor.centre": "In der Mitte des Kreises",
   "editor.centre_heat": "Wärme",
