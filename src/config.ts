@@ -139,9 +139,9 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
   const resolved = resolveConfig(config);
   return {
     ...config,
-    font: resolved.font,
-    source: resolved.source,
-    shape: resolved.shape,
+    font: config.font,
+    source: config.source,
+    shape: config.shape,
     sections: {
       ...config.sections,
       flow: resolved.sections.flow,
@@ -150,11 +150,12 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
     },
     flow: {
       ...config.flow,
-      layout: resolved.flow.layout,
       spread: resolved.flow.spread,
       circuit_details: resolved.flow.circuit_details,
-      detail: resolved.flow.detail,
-      centre: resolved.flow.centre
+      sun: resolved.flow.sun,
+      bypass: resolved.flow.bypass,
+      range: resolved.flow.range,
+      origin: resolved.flow.origin
     },
     day: {
       ...config.day,
@@ -301,6 +302,85 @@ export function getConfigForm(locale: string) {
     },
     {
       type: "expandable",
+      name: "flow",
+      title: t("editor.showing"),
+      schema: [
+        {
+          name: "labels",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "short", label: t("editor.labels_short") },
+                { value: "icon", label: t("editor.labels_icon") },
+                { value: "name", label: t("editor.labels_name") }
+              ]
+            }
+          }
+        },
+        {
+          name: "circuit",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "room", label: t("editor.circuit_room") },
+                { value: "flow", label: t("editor.circuit_flow") }
+              ]
+            }
+          }
+        },
+        {
+          name: "gauge",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "bar", label: t("editor.gauge_bar") },
+                { value: "box", label: t("editor.gauge_box") }
+              ]
+            }
+          }
+        },
+        {
+          name: "ring",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "both", label: t("editor.ring_both") },
+                { value: "clock", label: t("editor.ring_clock") },
+                { value: "shares", label: t("editor.ring_shares") }
+              ]
+            }
+          }
+        },
+        {
+          name: "foot",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "full", label: t("editor.foot_full") },
+                { value: "drive", label: t("editor.foot_drive") },
+                { value: "none", label: t("editor.foot_none") }
+              ]
+            }
+          }
+        },
+        {
+          type: "grid",
+          schema: [
+            { name: "sun", selector: { boolean: {} } },
+            { name: "bypass", selector: { boolean: {} } },
+            { name: "range", selector: { boolean: {} } },
+            { name: "origin", selector: { boolean: {} } }
+          ]
+        }
+      ]
+    },
+    {
+      type: "expandable",
       name: "day",
       title: t("editor.section_day"),
       schema: [
@@ -352,6 +432,15 @@ export function getConfigForm(locale: string) {
     circuit_details: t("editor.circuit_details"),
     detail: t("editor.detail"),
     centre: t("editor.centre"),
+    labels: t("editor.labels"),
+    circuit: t("editor.circuit"),
+    gauge: t("editor.gauge"),
+    ring: t("editor.ring"),
+    sun: t("editor.sun"),
+    bypass: t("editor.bypass"),
+    range: t("editor.range"),
+    origin: t("editor.origin"),
+    foot: t("editor.foot"),
     days: t("editor.days"),
     short_run: t("editor.short_run"),
     cycling_from: t("editor.cycling_from")
@@ -366,6 +455,7 @@ export function getConfigForm(locale: string) {
       if (item.name === "mode") return t("editor.help_yaml");
       if (item.name === "detail") return t("editor.help_detail");
       if (item.name === "centre") return t("editor.help_centre");
+      if (item.name === "labels") return t("editor.help_showing");
       return undefined;
     }
   };

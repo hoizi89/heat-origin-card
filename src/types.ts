@@ -127,6 +127,12 @@ export interface StoreConfig {
   marks?: StoreMarks;
   /** Litres; with it the card shows the usable heat in kWh. */
   volume?: number;
+  /**
+   * Which mark the cooling is extrapolated to, for the line that says when a store
+   * reaches it. `eco` by default. What the heat pump then does is its own business:
+   * a surplus of sun may have it charge long before, and the card cannot know that.
+   */
+  due_at?: "eco" | "target" | "pv" | "max";
   /** The lowest useful temperature: 40 °C for a shower, 30 °C for underfloor heating.
    *  A buffer without one measures against the flow of its warmest running circuit. */
   usable_min?: number;

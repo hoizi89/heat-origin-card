@@ -33,7 +33,13 @@ export interface BoxModel {
   labelRight?: string;
   valueRight?: string;
   /** A store: where its level stands, and where its layering ends. */
-  level?: { top: number; bottom: number; marks: number[]; scale?: [string, string]; mark?: [number, string] };
+  level?: {
+    top: number;
+    bottom: number;
+    /** Where each set-point sits on the bar, and what it is called. */
+    marks: Array<{ at: number; name: string }>;
+    scale?: [string, string];
+  };
   /** A circuit: flow up, return down. */
   pair?: { up: string; down?: string; note?: string; spread?: string };
   /** A circuit shown by its flow instead of its room: one line of detail. */
@@ -105,6 +111,20 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       fill=${m.level && m.on ? t.ink : t.muted}>${m.valueRight}</text>`);
   }
 
+  // Between the temperature and the usable heat is the widest free space in a wide box,
+  // and the circulation is the figure that changes most often. It goes there.
+  if (m.loop && w >= 150) {
+    const lt = m.loop.on ? m.tone : t.muted;
+    const leftEnd = tx + (m.value.length * T.figure * 0.56);
+    const rightStart = m.valueRight === undefined ? rx : rx - (m.valueRight.length * T.small * 0.56);
+    const width = 12 + m.loop.text.length * T.small * 0.56;
+    const lx = (leftEnd + rightStart) / 2 - width / 2;
+    if (lx > leftEnd + 6 && lx + width < rightStart - 6) {
+      parts.push(icon("loop", lx, y + 30, lt, 0.6));
+      parts.push(svg`<text x=${lx + 13} y=${y + 38} font-size=${T.small} fill=${lt}>${m.loop.text}</text>`);
+    }
+  }
+
   if (m.pair) {
     const ax = rx - 30;
     parts.push(arrow(ax, y + 20, true, tone));
@@ -132,7 +152,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       parts.push(svg`<rect x=${tx} y=${by} width=${(bw * m.level.bottom).toFixed(1)} height="4.5" rx="2.25" fill=${m.tone}/>`);
     }
     for (const mark of m.level.marks) {
-      const mx = (tx + bw * mark).toFixed(1);
+      const mx = (tx + bw * mark.at).toFixed(1);
       parts.push(svg`<line x1=${mx} x2=${mx} y1=${by - 2} y2=${by + 6.5} stroke=${t.ink} stroke-width="1.2" opacity="0.45"/>`);
     }
   }
@@ -143,18 +163,20 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     parts.push(svg`<text x=${tx} y=${y + 59} font-size=${T.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
     parts.push(svg`<text x=${rx} y=${y + 59} text-anchor="end" font-size=${T.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
 
-    // The middle of that row is the widest free space in the box. A circulation drawing
-    // off the store earns it over the name of a mark the notch already shows — but only
-    // where the box is wide enough for three things to stand apart.
-    if (m.loop && w >= 150) {
-      const lt = m.loop.on ? m.tone : t.muted;
-      const width = 11 + m.loop.text.length * T.micro * 0.56;
-      const lx = (tx + rx) / 2 - width / 2;
-      parts.push(icon("loop", lx, y + 51, lt, 0.55));
-      parts.push(svg`<text x=${lx + 12} y=${y + 59} font-size=${T.micro} fill=${lt}>${m.loop.text}</text>`);
-    } else if (m.level.mark && style.gauge === "bar") {
-      parts.push(svg`<text x=${(tx + bw * m.level.mark[0]).toFixed(1)} y=${y + 59} text-anchor="middle"
-        font-size=${T.micro} fill=${t.muted}>${m.level.mark[1]}</text>`);
+    // A notch without a name is a line nobody can read. Each set-point writes its own
+    // name under its own notch, as far as the ends of the scale leave room.
+    if (style.gauge === "bar") {
+      const guard = (m.level.scale[0].length * T.micro * 0.56) + 6;
+      const guardR = bw - (m.level.scale[1].length * T.micro * 0.56) - 6;
+      let taken = guard;
+      for (const mark of m.level.marks) {
+        const half = (mark.name.length * T.micro * 0.56) / 2;
+        const at = bw * mark.at;
+        if (at - half < taken || at + half > guardR) continue;
+        taken = at + half + 5;
+        parts.push(svg`<text x=${(tx + at).toFixed(1)} y=${y + 59} text-anchor="middle"
+          font-size=${T.micro} fill=${t.muted}>${mark.name}</text>`);
+      }
     }
   }
 

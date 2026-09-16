@@ -104,6 +104,7 @@ flow:
 | `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |
 | `circuits[].short`, `stores[].short` | guessed | The mark under the symbol, usually the storey. |
 | `stores[].usable_max` | highest mark | What the level bar calls full. |
+| `stores[].due_at` | `eco` | Which mark the measured cooling is counted down to. The line names that mark rather than promising a start: what the heat pump does when it gets there is its own business, and a surplus of sun may have it charge long before. |
 | `flow.layout` | `columns` | `columns`: the heat pump heads the left column with hot water under it, and the heating group — the buffer, then the circuits it feeds — owns the right one. Two things beside each other instead of three, so a box is 171 px wide rather than 116, and the buffer reaches its circuits down the column instead of around the drawing. `split`: stores left, circuits right, the heat pump between them. |
 | `flow.spread` | `true` | Flow, return, spread and volume under the drawing. |
 | `flow.circuit_details` | `false` | Flow, return and spread inside each circuit. |

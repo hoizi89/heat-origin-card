@@ -100,20 +100,21 @@ describe("the flow", () => {
   it("writes the circulation into the hot water box where the box is wide enough", async () => {
     const { root } = await mount(FULL_CONFIG);
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));
-    // Two columns leave room for it beside the scale; the notch alone can speak for the mark.
+    // It sits in the widest gap there is, between the temperature and the usable heat,
+    // so the scale below keeps room for the set-points to name themselves.
     expect(text(hotWater as Element)).toContain("34,3°");
-    expect(text(hotWater as Element)).not.toContain("Soll");
-    // The buffer has no circulation, so its mark keeps the middle of the row.
+    expect(text(hotWater as Element)).toContain("Soll");
     const buffer = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Puffer"));
     expect(text(buffer as Element)).not.toContain("34,3°");
   });
 
-  it("gives the mark back the middle in the narrower split arrangement", async () => {
+  it("keeps the circulation out of the narrower split box, where it would not fit", async () => {
     const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));
-    // At 116 px three things on one row would touch, so the circulation stays in the tooltip.
+    // At 116 px the figures leave no gap between them, so it falls back to the tooltip.
     expect(text(hotWater as Element)).toContain("Soll");
     expect(text(hotWater as Element)).not.toContain("34,3°");
+    expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation");
   });
 
   it("splits stores left of the heat pump and circuits right when asked", async () => {

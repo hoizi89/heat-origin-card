@@ -47,13 +47,26 @@ describe("configuration", () => {
     expect(order).toEqual(["stores", "flow", "day"]);
   });
 
-  it("shows the editor the values the card uses, not blanks for what the YAML leaves out", () => {
+  it("fills in the switches, because an empty switch would read as off, and leaves the rest alone", () => {
     const data = editorData({ type: "t", entities: { mode: "sensor.x" }, stores: [{ name: "Warmwasser", top: "sensor.t" }] });
+    // A section left out of the YAML is on, so its switch has to say on.
     expect(data.sections).toMatchObject({ flow: true, day: true, stores: false });
-    expect(data.font).toBe("system");
-    expect(data.source).toBe("air");
-    expect(data.shape).toBe("standard");
-    expect(data.flow).toMatchObject({ spread: true, circuit_details: false });
+    expect(data.flow).toMatchObject({ spread: true, circuit_details: false, sun: true, bypass: true });
+
+    // Home Assistant writes back every field the form shows. A dropdown filled in with
+    // today's default would freeze it into the YAML, and a later default could never
+    // reach the card again — so the dropdowns stay empty until somebody chooses.
+    expect(data.font).toBeUndefined();
+    expect(data.source).toBeUndefined();
+    expect(data.shape).toBeUndefined();
+    expect(data.flow?.layout).toBeUndefined();
+    expect(data.flow?.detail).toBeUndefined();
+    expect(data.flow?.labels).toBeUndefined();
+
+    // What somebody did choose comes back as they wrote it.
+    const chosen = editorData({ type: "t", entities: { mode: "sensor.x" }, font: "mono", flow: { labels: "name" } });
+    expect(chosen.font).toBe("mono");
+    expect(chosen.flow?.labels).toBe("name");
     expect(data.day).toMatchObject({ days: 2, short_run: 120, cycling_from: 3 });
     // A section switched off stays off, and lists stay as written.
     const off = editorData({ type: "t", entities: { mode: "sensor.x" }, sections: { day: false }, flow: { extras: [{ entity: "sensor.y" }] } });

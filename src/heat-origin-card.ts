@@ -341,22 +341,27 @@ export class HeatOriginCard extends LitElement {
   }
 
   /**
-   * When the heat pump will have to make hot water again: the store cools, and the Eco
-   * mark is where it gives in. A more tempting figure would be "enough for two showers",
-   * but how long anyone showers is not something the card can measure.
+   * When a store will reach one of its own marks, from the fall it is measuring on
+   * itself. It says that and no more: whether the heat pump then starts is not the
+   * card's to know — a surplus of sun may have it charge to the PV mark hours earlier,
+   * and an eco setting may let it sink further. So the line names the mark it is
+   * counting down to rather than promising a start, and `due_at` chooses which mark.
    */
   private _hotWaterDue(): string | undefined {
     const config = this._config as ResolvedConfig;
     const store = config.stores.find((st) => st.kind === "hot_water");
-    const eco = store?.marks?.eco;
-    if (!store || eco === undefined) return undefined;
+    if (!store) return undefined;
+    const key = store.due_at ?? "eco";
+    const at = store.marks?.[key];
+    if (at === undefined) return undefined;
     if (this._mode().kind === "hot_water") return undefined;
     const top = this._num(store.top);
     if (top === undefined) return undefined;
-    if (top <= eco) return this._t("store.due");
-    const hours = hoursLeft(top, eco, this._fall(store), config.forecast_min_slope);
+    const mark = this._t(`mark.${key}`);
+    if (top <= at) return this._t("store.due", { mark });
+    const hours = hoursLeft(top, at, this._fall(store), config.forecast_min_slope);
     if (hours === undefined) return undefined;
-    return this._t("store.due_in", { span: this._spanWords(hours) });
+    return this._t("store.due_in", { mark, span: this._spanWords(hours) });
   }
 
   private _circuitActive(circuit: ResolvedConfig["circuits"][number]): boolean {
@@ -599,11 +604,13 @@ export class HeatOriginCard extends LitElement {
       const charging = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
       const draining = carried?.store === store;
       const usable = this._usable(store, floor);
+      // Every set-point carries its own name to its own notch: a bare line on the bar
+      // is something to wonder about, and wondering is what the card is meant to end.
       const marks = (["eco", "target", "pv", "max"] as const)
-        .map((key) => store.marks?.[key])
-        .filter((v): v is number => v !== undefined && v > floor && v < ceiling)
-        .map(at);
-      const target = store.marks?.target;
+        .map((key) => ({ key, value: store.marks?.[key] }))
+        .filter((x): x is { key: "eco" | "target" | "pv" | "max"; value: number } =>
+          x.value !== undefined && x.value > floor && x.value < ceiling)
+        .map((x) => ({ at: at(x.value), name: this._t(`mark.${x.key}`) }));
 
       const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : this._t("flow.top");
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
@@ -625,10 +632,7 @@ export class HeatOriginCard extends LitElement {
                 top: at(top),
                 bottom: at(bottom ?? top),
                 marks,
-                scale: [digits(floor), digits(ceiling)] as [string, string],
-                mark: target !== undefined && target > floor && target < ceiling
-                  ? ([at(target), this._t("mark.target")] as [number, string])
-                  : undefined
+                scale: [digits(floor), digits(ceiling)] as [string, string]
               },
         loop: this._loopOf(store),
         hint: this._storeHint(store, floor, ceiling, usable)
@@ -916,7 +920,7 @@ export class HeatOriginCard extends LitElement {
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
     parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_COL_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
     if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_COL_PUMP, heat, electric, shares));
-    parts.push(this._centre(cx, cy, heat, electric, live.cop, running, mode));
+    parts.push(this._centre(cx, cy, R_COL_PUMP, heat, electric, live.cop, running, mode));
 
     return html`
       <div class="section">
@@ -1004,7 +1008,7 @@ export class HeatOriginCard extends LitElement {
 
     parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
     if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_PUMP, heat, electric, shares));
-    parts.push(this._centre(cx, cy, heat, electric, live.cop, running, mode));
+    parts.push(this._centre(cx, cy, R_PUMP, heat, electric, live.cop, running, mode));
 
     return html`
       <div class="section">
@@ -1052,7 +1056,7 @@ export class HeatOriginCard extends LitElement {
   }
 
   /** What the circle reads. Electricity is as interesting as heat on some days. */
-  private _centre(cx: number, cy: number, heat: number, electric: number, cop: number | undefined, running: boolean, mode: ReturnType<HeatOriginCard["_mode"]>) {
+  private _centre(cx: number, cy: number, r: number, heat: number, electric: number, cop: number | undefined, running: boolean, mode: ReturnType<HeatOriginCard["_mode"]>) {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
     if (!running) {
@@ -1065,12 +1069,22 @@ export class HeatOriginCard extends LitElement {
       const short = span.hours !== undefined
         ? `${span.hours}:${String(span.minutes ?? 0).padStart(2, "0")} ${this._t("unit.h")}`
         : `${span.minutes ?? 0} ${this._t("unit.min")}`;
+      // A symbol alone leaves the reader to guess what it meant. Where the circle is wide
+      // enough at that height, the word itself goes there; the symbol is the fallback,
+      // and it has to be shifted by half its own width to sit on the middle.
+      const word = this._t(`kind.${last.kind}`);
+      const chord = 2 * Math.sqrt(Math.max(0, r * r - 21 * 21)) - 8;
+      const fits = word.length * TYPE.small * 0.56 <= chord;
       const mark = last.kind === "hot_water" ? "water" : last.kind === "heating" ? "flame" : undefined;
       return svg`
         <text x=${cx} y=${cy - 12} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.08em"
           fill=${PALETTE.muted}>${this._t("flow.last").toUpperCase()}</text>
         <text x=${cx} y=${cy + 6} text-anchor="middle" font-size=${TYPE.figure} font-weight="700" fill=${PALETTE.ink}>${short}</text>
-        ${mark ? iconMark(mark, cx, cy + 11, TONE[last.kind]) : nothing}`;
+        ${fits
+          ? svg`<text x=${cx} y=${cy + 21} text-anchor="middle" font-size=${TYPE.small} font-weight="600" fill=${TONE[last.kind]}>${word}</text>`
+          : mark
+            ? iconMark(mark, cx - 8, cy + 11, TONE[last.kind])
+            : nothing}`;
     }
 
     const centre = config.flow.centre;
