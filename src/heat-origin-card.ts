@@ -630,6 +630,7 @@ export class HeatOriginCard extends LitElement {
                   ? ([at(target), this._t("mark.target")] as [number, string])
                   : undefined
               },
+        loop: this._loopOf(store),
         hint: this._storeHint(store, floor, ceiling, usable)
       };
     });
@@ -685,6 +686,19 @@ export class HeatOriginCard extends LitElement {
     });
 
     return { stores, circuits };
+  }
+
+  /**
+   * The circulation belongs to the store it draws from, not to a box of its own: it
+   * takes hot water out of the cylinder and gives none back. Its temperature says how
+   * far the loop has cooled; whether the pump runs says whether that matters now.
+   */
+  private _loopOf(store: StoreConfig & { kind: StoreKind }): BoxModel["loop"] {
+    if (!store.circulation && !store.circulation_pump) return undefined;
+    const temp = this._temp(store.circulation);
+    const on = store.circulation_pump ? this._isOn(store.circulation_pump) : false;
+    const text = temp !== undefined ? `${temp}°` : this._t(on ? "stores.circulation_on" : "stores.circulation_off");
+    return { text, on };
   }
 
   /** What the box says when the pointer rests on it: the sums behind its two figures. */

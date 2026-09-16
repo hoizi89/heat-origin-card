@@ -82,7 +82,7 @@ flow:
 | `entities.heat_today`, `electric_today` | | Totals, for heat pumps that do not split by mode; one factor under the starts. |
 | `entities.cop_heating_month` … `cop_hot_water_year` | | Compared with today's factor; the year stands in where no month is given. |
 | `circuits[].active` | HEATING, ECO, COOLING, … | Words of the circuit's state that mean it takes heat. |
-| `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store, so it shows there and as a small mark on the hot water in the flow, not as a circuit. A circuit named or marked as circulation is moved to the hot water store. |
+| `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store and gives nothing back, so it belongs to that store rather than to a circuit of its own: in a wide box it stands in the middle of the scale row, lit while the pump runs. A circuit named or marked as circulation is moved to the hot water store. |
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |
 | `circuits[].temperature` | | One temperature, for loops without flow and return. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh. |

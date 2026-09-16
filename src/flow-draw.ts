@@ -38,6 +38,8 @@ export interface BoxModel {
   pair?: { up: string; down?: string; note?: string; spread?: string };
   /** A circuit shown by its flow instead of its room: one line of detail. */
   sub?: string;
+  /** The circulation drawing off this store: its temperature, and whether it runs. */
+  loop?: { text: string; on: boolean };
   /** What the box says when the pointer rests on it. */
   hint?: string;
 }
@@ -140,7 +142,17 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     const bw = rx - tx;
     parts.push(svg`<text x=${tx} y=${y + 59} font-size=${T.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
     parts.push(svg`<text x=${rx} y=${y + 59} text-anchor="end" font-size=${T.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
-    if (m.level.mark && style.gauge === "bar") {
+
+    // The middle of that row is the widest free space in the box. A circulation drawing
+    // off the store earns it over the name of a mark the notch already shows — but only
+    // where the box is wide enough for three things to stand apart.
+    if (m.loop && w >= 150) {
+      const lt = m.loop.on ? m.tone : t.muted;
+      const width = 11 + m.loop.text.length * T.micro * 0.56;
+      const lx = (tx + rx) / 2 - width / 2;
+      parts.push(icon("loop", lx, y + 51, lt, 0.55));
+      parts.push(svg`<text x=${lx + 12} y=${y + 59} font-size=${T.micro} fill=${lt}>${m.loop.text}</text>`);
+    } else if (m.level.mark && style.gauge === "bar") {
       parts.push(svg`<text x=${(tx + bw * m.level.mark[0]).toFixed(1)} y=${y + 59} text-anchor="middle"
         font-size=${T.micro} fill=${t.muted}>${m.level.mark[1]}</text>`);
     }

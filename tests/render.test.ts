@@ -97,6 +97,25 @@ describe("the flow", () => {
     expect(Number(rect?.getAttribute("width"))).toBeGreaterThan(160);
   });
 
+  it("writes the circulation into the hot water box where the box is wide enough", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));
+    // Two columns leave room for it beside the scale; the notch alone can speak for the mark.
+    expect(text(hotWater as Element)).toContain("34,3°");
+    expect(text(hotWater as Element)).not.toContain("Soll");
+    // The buffer has no circulation, so its mark keeps the middle of the row.
+    const buffer = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Puffer"));
+    expect(text(buffer as Element)).not.toContain("34,3°");
+  });
+
+  it("gives the mark back the middle in the narrower split arrangement", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
+    const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));
+    // At 116 px three things on one row would touch, so the circulation stays in the tooltip.
+    expect(text(hotWater as Element)).toContain("Soll");
+    expect(text(hotWater as Element)).not.toContain("34,3°");
+  });
+
   it("splits stores left of the heat pump and circuits right when asked", async () => {
     const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
     const x = (name: string) => boxX(root, name);
