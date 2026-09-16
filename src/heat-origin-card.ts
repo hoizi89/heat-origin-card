@@ -680,7 +680,9 @@ export class HeatOriginCard extends LitElement {
       const since = Number.isFinite(sinceAt) && Date.now() - sinceAt < DAY ? ` · ${clock(new Date(sinceAt), locale)}` : "";
       const doing = `${circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.running")}${since}`;
       // What the heating curve wants of the flow, and how far the flow is from it.
-      const curveAll = this._num(circuit.curve_flow);
+      // A controller writes 0 for a circuit it has switched off; that is no target.
+      const curveRaw = this._num(circuit.curve_flow);
+      const curveAll = curveRaw !== undefined && curveRaw > 5 ? curveRaw : undefined;
       const curveOff = curveAll !== undefined && flow !== undefined ? flow - curveAll : undefined;
       const signed = (off: number) => `${off > 0 ? "+" : off < 0 ? "−" : ""}${this._one(Math.abs(off))} K`;
 

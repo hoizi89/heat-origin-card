@@ -282,6 +282,16 @@ describe("the flow", () => {
     expect(flow).toContain("VL-Soll 30,6° −4,8 K");
     const stack = await box("stack");
     expect(stack).toContain("25,8° 30,6° VL-Soll 24,7°");
+    // A controller writes 0 for a circuit it has switched off: that is no target, so the return stands in.
+    const off = makeHass({
+      "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} },
+      "sensor.lambdawp_hc1_heating_curve_flow_line_temperature_calc": { entity_id: "sensor.lambdawp_hc1_heating_curve_flow_line_temperature_calc", state: "0.0", attributes: {} }
+    });
+    const { root } = await mount({ ...FULL_CONFIG, flow: { running: "quiet" } }, off);
+    const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("FBH EG")) as Element;
+    const words = [...g.querySelectorAll("text")].map((t) => t.textContent?.trim()).join(" ");
+    expect(words).not.toContain("VL-Soll");
+    expect(words).toContain("24,7°");
   });
 
   it("does not believe a circuit that says heating while its water sits at room temperature", async () => {

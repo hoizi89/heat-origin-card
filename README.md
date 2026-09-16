@@ -43,7 +43,7 @@ circuits:
     return: sensor.lambdawp_hc1_return_line_temperature
     room: sensor.lambdawp_hc1_room_device_temperature
     target_room: sensor.lambdawp_hc1_target_room_temperature
-    curve_flow: sensor.lambdawp_hc1_heating_curve_flow_line_temperature_calc
+    curve_flow: sensor.lambdawp_hc1_target_temp_flow_line   # the target with the room taken into account, not the raw curve
 stores:
   - name: Hot water
     top: sensor.lambdawp_boil1_actual_high_temperature
@@ -79,7 +79,7 @@ flow:
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |
 | `circuits[].temperature` | | One temperature, for loops without flow and return. |
 | `circuits[].target_room` | | The room the circuit was asked for. A room reading is neither good nor bad until something says what was wanted there, so with this the figure becomes an answer and its distance from the target is written under it. |
-| `circuits[].curve_flow` | | What the heating curve is asking of the circuit. While a circuit rests its return line is a number with nothing behind it, so this takes that place instead. |
+| `circuits[].curve_flow` | | The flow the controller is asking for — its flow target with the room taken into account (Lambda: `target_temp_flow_line`), not the raw curve, which ignores a room that is already warm. A value of 5 °C or below counts as none: controllers write 0 for a circuit they have switched off. |
 | `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |
 | `circuits[].short`, `stores[].short` | guessed | The mark under the symbol, usually the storey. |
 | `stores[].kind` | guessed from the name | `hot_water` or `buffer`. |
