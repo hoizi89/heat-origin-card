@@ -219,9 +219,9 @@ describe("the flow", () => {
       "sensor.lambdawp_hc1_return_line_temperature": { entity_id: "sensor.lambdawp_hc1_return_line_temperature", state: "23.0", attributes: { unit_of_measurement: "°C" } }
     });
     const { root } = await mount(FULL_CONFIG, hass);
-    // A pump against a closed mixer: no spread, no heat, so the buffer carries nothing
-    // and the scale does not take 22,9° for empty.
-    expect([...root.querySelectorAll(".chip")].some((c) => c.textContent?.includes("Puffer →"))).toBe(false);
+    // A pump against a closed mixer: the line from the buffer stands, because the pump
+    // does draw on it, but the scale does not take 22,9° for empty — that is not a floor.
+    expect([...root.querySelectorAll(".chip")].some((c) => c.textContent?.includes("Puffer →"))).toBe(true);
     const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");
     expect(titles.find((t) => t.startsWith("Puffer"))).toContain("leer unter 30,0 °C");
   });

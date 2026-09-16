@@ -390,7 +390,7 @@ export class HeatOriginCard extends LitElement {
     if (this._mode().kind === "heating") return undefined;
     const circuits: number[] = [];
     config.circuits.forEach((circuit, index) => {
-      if (circuit.kind === "heating" && this._circuitTaking(circuit)) circuits.push(index);
+      if (circuit.kind === "heating" && this._circuitActive(circuit)) circuits.push(index);
     });
     return circuits.length ? { store, circuits } : undefined;
   }
@@ -955,7 +955,7 @@ export class HeatOriginCard extends LitElement {
         surface: PALETTE.surface,
         track: PALETTE.track,
         live: Boolean(carried) || (running && mode.kind === "heating"),
-        taking: config.circuits.map((c) => this._circuitTaking(c))
+        taking: config.circuits.map((c) => this._circuitActive(c))
       }));
     }
 
