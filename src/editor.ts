@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing } from "lit";
-import { assertConfig, editorData, getConfigForm } from "./config";
+import { assertConfig, editorData, foldEditorData, getConfigForm } from "./config";
 import type { HeatOriginCardConfig, HomeAssistant } from "./types";
 import { localeOf } from "./values";
 
@@ -43,7 +43,7 @@ export class HeatOriginCardEditor extends LitElement {
 
   protected render() {
     if (!this.hass || !this._config) return nothing;
-    const form = getConfigForm(localeOf(this.hass));
+    const form = getConfigForm(localeOf(this.hass), this._config);
     return html`
       <ha-form
         .hass=${this.hass}
@@ -58,7 +58,7 @@ export class HeatOriginCardEditor extends LitElement {
 
   private _valueChanged(event: CustomEvent): void {
     event.stopPropagation();
-    const config = event.detail.value as HeatOriginCardConfig;
+    const config = foldEditorData(event.detail.value as Record<string, unknown>);
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { bubbles: true, composed: true, detail: { config } }));
   }

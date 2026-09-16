@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertConfig, editorData, getConfigForm, resolveConfig, stubConfig } from "../src/config";
+import { assertConfig, editorData, foldEditorData, getConfigForm, resolveConfig, stubConfig } from "../src/config";
 import { FULL_CONFIG } from "./fixtures";
 
 const bare = { type: "t", entities: { mode: "sensor.x" } };
@@ -98,10 +98,22 @@ describe("configuration", () => {
     for (const m of flat.matchAll(/"label":"(editor\.[^"]+)"/g)) throw new Error(`no text for ${m[1]}`);
   });
 
-  it("labels the flow sensor and the flow group apart", () => {
-    const form = getConfigForm("de");
-    expect(form.computeLabel({ name: "flow", selector: { entity: {} } })).toBe("Vorlauf");
-    expect(form.computeLabel({ name: "flow" })).toBe("flow");
+  it("gives every store and circuit a group of its own, and folds them back into their lists", () => {
+    const data = editorData(FULL_CONFIG);
+    expect(data.store_0).toMatchObject({ name: "Warmwasser", volume: 300 });
+    expect(data.circuit_1).toMatchObject({ name: "Heizkörper OG" });
+    expect(data).not.toHaveProperty("stores");
+    expect(data).not.toHaveProperty("circuits");
+    // A field cleared in the form is dropped, not written as an empty string.
+    const back = foldEditorData({ ...data, store_1: { ...(data.store_1 as object), bottom: "", marks: { eco: undefined } } });
+    expect(back.stores?.[1]).toEqual({ name: "Puffer", top: "sensor.lambdawp_buff1_actual_high_temperature", volume: 300 });
+    expect(back.stores?.[0]).toMatchObject({ marks: { eco: 44.5, target: 48.5, pv: 57.5 } });
+    expect(back.circuits).toHaveLength(2);
+    expect(back).not.toHaveProperty("store_0");
+    const form = getConfigForm("de", FULL_CONFIG);
+    expect(JSON.stringify(form.schema)).toContain('"title":"Warmwasser"');
+    expect(form.computeLabel({ name: "eco" })).toBe("Eco");
+    expect(form.computeLabel({ name: "volume" })).toBe("Volumen");
   });
 
   it("guesses the heat pump's own state, not the ambient one that carries the same word", () => {

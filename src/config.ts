@@ -1,7 +1,7 @@
 import { guessCircuitIcon, guessShort, guessStoreIcon, isIconName, type IconName } from "./icons";
 import { localize } from "./localize";
 import { resolveModes } from "./modes";
-import type { FlowOptions, HeatOriginCardConfig, ResolvedConfig, ResolvedFlow, StoreKind } from "./types";
+import type { CircuitConfig, FlowOptions, HeatOriginCardConfig, ResolvedConfig, ResolvedFlow, StoreConfig, StoreKind } from "./types";
 
 export const CARD_TYPE = "heat-origin-card";
 
@@ -120,21 +120,30 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
 const LEGACY_FLOW_KEYS = ["layout", "spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
 const LEGACY_CARD_KEYS = ["sections", "day"] as const;
 
+/** `stores[1]` is `store_1` to the form: ha-form reaches into objects by key, never into a list by index. */
+const listKey = (list: "store" | "circuit", i: number) => `${list}_${i}`;
+const LIST_KEY = /^(store|circuit)_(\d+)$/;
+
 /**
  * What the editor shows: every list and switch at what the card really uses, so what is
  * on the screen and what is in the form agree. Home Assistant writes back every field
  * the form shows, so opening the editor once turns the defaults into YAML — and since
  * they are exactly what the card does, that YAML is a true record rather than a frozen
- * guess. Keys from earlier versions are translated and dropped on the way, and lists
- * (circuits, stores, extras, state words) stay as written.
+ * guess. Keys from earlier versions are translated and dropped on the way. Each store
+ * and circuit gets a key of its own, so the form can reach it; `foldEditorData` puts
+ * them back into their lists.
  */
-export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
+export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig & Record<string, unknown> {
   const resolved = resolveConfig(config);
   const card: Record<string, unknown> = { ...config };
   for (const key of LEGACY_CARD_KEYS) delete card[key];
+  delete card.stores;
+  delete card.circuits;
   const flow: Record<string, unknown> = { ...(config.flow ?? {}) };
   for (const key of LEGACY_FLOW_KEYS) delete flow[key];
   const { extras: _extras, layout, ...choices } = resolved.flow;
+  (config.circuits ?? []).forEach((c, i) => (card[listKey("circuit", i)] = { ...c }));
+  (config.stores ?? []).forEach((s, i) => (card[listKey("store", i)] = { ...s }));
   return {
     ...(card as unknown as HeatOriginCardConfig),
     layout,
@@ -145,10 +154,44 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
   };
 }
 
-const sensor = { entity: { domain: "sensor" } };
+/** A field cleared in the form comes back empty; it is dropped rather than written as "". */
+function tidy(value: unknown): unknown {
+  if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value === "" || value === null ? undefined : value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const clean = tidy(v);
+    if (clean === undefined) continue;
+    if (clean && typeof clean === "object" && !Array.isArray(clean) && Object.keys(clean as object).length === 0) continue;
+    out[k] = clean;
+  }
+  return out;
+}
 
-/** The form the visual editor shows; lists (circuits, stores) stay in YAML. */
-export function getConfigForm(locale: string) {
+/** What the form hands back, folded into the card's own shape again. */
+export function foldEditorData(data: Record<string, unknown>): HeatOriginCardConfig {
+  const out: Record<string, unknown> = {};
+  const lists: Record<"store" | "circuit", Array<[number, unknown]>> = { store: [], circuit: [] };
+  for (const [key, value] of Object.entries(data)) {
+    const m = LIST_KEY.exec(key);
+    if (m) lists[m[1] as "store" | "circuit"].push([Number(m[2]), tidy(value)]);
+    else out[key] = value;
+  }
+  const inOrder = (items: Array<[number, unknown]>) => items.sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  if (lists.circuit.length) out.circuits = inOrder(lists.circuit);
+  if (lists.store.length) out.stores = inOrder(lists.store);
+  return out as unknown as HeatOriginCardConfig;
+}
+
+const sensor = { entity: { domain: "sensor" } };
+const onOff = { entity: { domain: ["switch", "binary_sensor", "input_boolean"] } };
+const MARKS = ["eco", "target", "pv", "max"] as const;
+
+/**
+ * The form the visual editor shows. Every store and circuit already in the card gets a
+ * group of its own; adding or removing one is done in YAML, where the lists live.
+ */
+export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
   const t = (key: string) => localize(key, locale);
   const choice = (name: keyof typeof CHOICES) => ({
     name,
@@ -164,6 +207,35 @@ export function getConfigForm(locale: string) {
     selector: { select: { mode: "dropdown", options: values.map((value) => ({ value, label: t(`editor.${name}_${value}`) })) } }
   });
   const toggle = (name: (typeof SWITCHES)[number]) => ({ name, selector: { boolean: {} } });
+  const degrees = (name: string) => ({ name, selector: { number: { min: 0, max: 100, step: 0.5, mode: "box", unit_of_measurement: "°C" } } });
+  const text = (name: string) => ({ name, selector: { text: {} } });
+  const grid = (schema: unknown[]) => ({ type: "grid", schema });
+
+  const storeForm = (store: StoreConfig, i: number) => ({
+    type: "expandable",
+    name: listKey("store", i),
+    title: store.name || `${t("editor.store")} ${i + 1}`,
+    schema: [
+      grid([text("name"), words("kind", ["hot_water", "buffer"])]),
+      grid([{ name: "top", required: true, selector: sensor }, { name: "bottom", selector: sensor }]),
+      grid([{ name: "volume", selector: { number: { min: 0, max: 5000, step: 10, mode: "box", unit_of_measurement: "l" } } }, degrees("usable_min"), degrees("usable_max")]),
+      { type: "expandable", name: "marks", title: t("editor.marks"), schema: [grid(MARKS.map(degrees))] },
+      grid([{ name: "circulation", selector: sensor }, { name: "circulation_pump", selector: onOff }]),
+      words("due_at", ["eco", "target", "pv", "max"])
+    ]
+  });
+  const circuitForm = (circuit: CircuitConfig, i: number) => ({
+    type: "expandable",
+    name: listKey("circuit", i),
+    title: circuit.name || `${t("editor.circuit_one")} ${i + 1}`,
+    schema: [
+      grid([text("name"), text("short")]),
+      grid([{ name: "state", selector: sensor }, { name: "pump", selector: onOff }]),
+      grid([{ name: "flow", selector: sensor }, { name: "return", selector: sensor }]),
+      grid([{ name: "room", selector: sensor }, { name: "target_room", selector: sensor }]),
+      grid([{ name: "curve_flow", selector: sensor }, words("icon", ["floor", "radiator", "fancoil", "pipe", "water", "buffer", "loop"])])
+    ]
+  });
 
   const schema = [
     {
@@ -171,10 +243,10 @@ export function getConfigForm(locale: string) {
       title: t("editor.group_general"),
       expanded: true,
       schema: [
-        { name: "title", selector: { text: {} } },
+        text("title"),
         // The layout's words are long; they get the row to themselves.
         choice("layout"),
-        { type: "grid", schema: [words("shape", ["standard", "compact"]), words("font", ["system", "mono"])] },
+        grid([words("shape", ["standard", "compact"]), words("font", ["system", "mono"])]),
         words("source", ["air", "ground", "water"])
       ]
     },
@@ -184,18 +256,20 @@ export function getConfigForm(locale: string) {
       title: t("editor.entities"),
       schema: [
         { name: "mode", required: true, selector: sensor },
-        {
-          type: "grid",
-          schema: [
+        grid(
+          [
             "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop",
             "heating_heat_today", "heating_electric_today", "hot_water_heat_today", "hot_water_electric_today", "heat_today", "electric_today"
           ].map((name) => ({ name, selector: sensor }))
-        }
+        )
       ]
     },
+    ...(config?.circuits ?? []).map(circuitForm),
+    ...(config?.stores ?? []).map(storeForm),
     // One group per thing in the drawing: the heat pump, the circuits, the stores, and
-    // what every box and the foot share. A choice with three or more looks is a list,
-    // one with two a switch; the helper under each says when it is on the screen at all.
+    // the presentation every box and the foot share. A choice with three or more looks
+    // is a list, one with two a switch; the helper under each says when it is on the
+    // screen at all.
     { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
     { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), toggle("curve")] },
     {
@@ -213,19 +287,20 @@ export function getConfigForm(locale: string) {
   ];
 
   const labelled = [
-    "title", "layout", "shape", "font", "source", "mode", "heat_power", "electric_power", "return", "volume_flow", "outdoor", "solar",
+    "title", "layout", "shape", "font", "source", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
     "house_power", "grid_power", "battery_power", "cop", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
-    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance"
+    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance",
+    "name", "kind", "top", "bottom", "volume", "usable_min", "usable_max", "circulation", "circulation_pump", "due_at",
+    "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "source", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
+  const helped = ["mode", "source", "volume", "usable_min", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
 
   return {
     schema,
-    // The flow temperature sensor and the flow group share a name; only the sensor has an entity selector.
-    computeLabel: (item: { name: string; selector?: { entity?: unknown } }) =>
-      item.name === "flow" && item.selector?.entity ? t("editor.flow") : labels[item.name] ?? item.name,
+    computeLabel: (item: { name: string }) =>
+      (MARKS as readonly string[]).includes(item.name) ? t(`mark.${item.name}`) : labels[item.name] ?? item.name,
     computeHelper: (item: { name: string }) => (helped.includes(item.name) ? t(`editor.help_${item.name}`) : undefined)
   };
 }
