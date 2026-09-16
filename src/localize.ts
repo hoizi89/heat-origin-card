@@ -140,7 +140,7 @@ const en: Table = {
   "editor.trend_rate": "Arrow and K/h",
   "editor.trend_arrow": "Arrow only",
   "editor.trend_none": "Nothing",
-  "editor.help_trend": "From 0.4 K/h over the last 20 minutes; a store that holds still gets no arrow.",
+  "editor.help_trend": "Read off the last hour. Under 0.15 K/h the arrow lies flat: the store is holding.",
   "editor.rest_colour": "A resting box keeps its symbol's colour",
 
   "editor.buffer_line": "When the buffer carries the circuits alone",
@@ -298,7 +298,7 @@ const de: Table = {
   "editor.trend_rate": "Pfeil und K/h",
   "editor.trend_arrow": "Nur der Pfeil",
   "editor.trend_none": "Nichts",
-  "editor.help_trend": "Erst ab 0,4 K/h in den letzten 20 Minuten; ein Speicher, der sich nicht rührt, bekommt keinen Pfeil.",
+  "editor.help_trend": "Aus der letzten Stunde gelesen. Unter 0,15 K/h liegt der Pfeil waagrecht: der Speicher hält.",
   "editor.rest_colour": "Ein ruhender Kasten behält die Farbe seines Symbols",
 
   "editor.buffer_line": "Trägt der Puffer die Heizkreise allein",

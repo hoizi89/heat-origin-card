@@ -264,13 +264,15 @@ describe("the flow", () => {
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser")) as Element;
     expect(hotWater.querySelector("linearGradient")).not.toBeNull();
     expect(text(hotWater)).toContain("PV 57,5°");
-    expect(text(hotWater)).toContain("40,0°");
+    expect(text(hotWater)).toContain("40°");
+    expect(text(hotWater)).toContain("Eco");
   });
 
   it("names the store's empty and full ends in its tooltip", async () => {
     const { root } = await mount(FULL_CONFIG);
     const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");
-    expect(titles.find((t) => t.startsWith("Puffer"))).toContain("leer unter 30,0 °C · voll ab 50,0 °C");
+    // The buffer has no marks and stands at 55,2°: twenty over its floor would call it over full, so the scale stretches to 60.
+    expect(titles.find((t) => t.startsWith("Puffer"))).toContain("leer unter 30,0 °C · voll ab 60,0 °C");
     expect(titles.find((t) => t.startsWith("Warmwasser"))).toContain("leer unter 40,0 °C · voll ab 57,5 °C");
   });
 });

@@ -86,7 +86,7 @@ flow:
 | `stores[].marks` | | `eco`, `target`, `pv`, `max` as numbers; each is named at its notch on the level. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh and the power being drawn. |
 | `stores[].usable_min` | 40 hot water; a buffer: the warmest running circuit's flow, else 30 | Where the level reads empty. |
-| `stores[].usable_max` | the highest mark, else `usable_min` + 20 K (buffer) or + 12 K (hot water) | Where the level reads full. Both ends stand under the level and are named in the box's tooltip. |
+| `stores[].usable_max` | the highest mark, else `usable_min` + 20 K (buffer) or + 12 K (hot water), stretched to the next five above the store's own temperature | Where the level reads full. Both ends stand under the level and are named in the box's tooltip. |
 | `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store and gives nothing back, so it belongs to that store rather than to a circuit of its own; a circuit named or marked as circulation is moved there. |
 | `stores[].due_at` | `eco` | Which mark the measured cooling is counted down to. The line names that mark rather than promising a start: what the heat pump does when it gets there is its own business, and a surplus of sun may have it charge long before. |
 | `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts and draws no trend. |
@@ -98,7 +98,7 @@ flow:
 | `flow.curve` | `false` | A resting circuit shows its room and the room's target alone — its flow and return are standing water. With this it also shows its flow and, beside it, what the heating curve wants of it. |
 | `flow.gauge` | `zones` | The store's level as stages: the stretch below the first set-point, then one per set-point, each filling on its own, so what the eye reads is which stage the store has reached rather than a percentage. `scale` draws a thermometer — the bar as the scale itself, cold to warm, with a pointer on the temperature. `bar` is a plain filling bar, `box` fills the whole box. |
 | `flow.scale` | `true` | The scale's ends written under the level (`scale`, `bar`, `box`); the stages name themselves instead. |
-| `flow.trend` | `rate` | Which way a store is going, from the fall the card measures anyway: arrow with the K/h where it fits, `arrow` alone, or `none`. |
+| `flow.trend` | `rate` | Which way a store is going, read off the last hour: arrow with the K/h where it fits, `arrow` alone, or `none`. Under 0.15 K/h the arrow lies flat — the store is holding. The forecast beside it keeps reading the last twenty minutes, so a shower shows up at once. |
 | `flow.rest_colour` | `true` | A resting box keeps its symbol in its own colour instead of greying out with its state. |
 | `flow.buffer_line` | `range` | While the buffer carries the circuits alone: the line with how long it can keep going; `line` alone; `named` also writes "from the buffer" in the circuit's box; `none` draws nothing. |
 | `flow.foot` | `full` | The line under the drawing; `no_spread` leaves flow, return and spread out, `drive` keeps only electricity and ambient heat, `none` nothing. |

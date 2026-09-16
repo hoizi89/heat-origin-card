@@ -97,7 +97,13 @@ const BOX_W = 116;
 const R_PUMP = 30;
 /** The heat pump rides above the middle, which frees the corridor under it. */
 const PUMP_LIFT = 10;
+/** The forecast reads the last twenty minutes: a shower shows up at once. */
 const TREND_WINDOW = 20 * 60 * 1000;
+/** The direction reads a whole hour: a buffer losing standby heat moves a tenth of a
+ *  kelvin at a time, and twenty minutes of that is a wobble, not a way. */
+const DRIFT_WINDOW = 60 * 60 * 1000;
+/** Kelvin per hour under which a store counts as holding. */
+const DRIFT_MIN = 0.15;
 
 /**
  * Two columns. The heat pump takes the head of the left one and hot water hangs under
@@ -194,7 +200,7 @@ export class HeatOriginCard extends LitElement {
     const start = new Date(midnight(now));
     try {
       const tops = config.stores.map((store) => store.top).filter(Boolean);
-      const since = Date.now() - TREND_WINDOW;
+      const since = Date.now() - DRIFT_WINDOW;
       const [history, trends] = await Promise.all([
         hass.callWS({
           type: "history/history_during_period",
@@ -251,14 +257,16 @@ export class HeatOriginCard extends LitElement {
     return warmest ?? 30;
   }
 
-  private _ceiling(store: StoreConfig & { kind: StoreKind }, floor: number): number {
+  private _ceiling(store: StoreConfig & { kind: StoreKind }, floor: number, top: number | undefined): number {
     if (store.usable_max !== undefined) return store.usable_max;
     const marks = store.marks ?? {};
     const highest = Math.max(...[marks.max, marks.pv, marks.target, marks.eco].filter((v): v is number => v !== undefined), -Infinity);
     if (Number.isFinite(highest) && highest > floor) return highest;
     // Hot water is nearly always marked; a heating buffer rarely is, and a heat pump
-    // pushes one to about twenty kelvin over what the circuits need.
-    return floor + (store.kind === "buffer" ? 20 : 12);
+    // pushes one to about twenty kelvin over what the circuits need. A store warmer
+    // than that is not "over full": the scale stretches to the next five above it.
+    const guess = floor + (store.kind === "buffer" ? 20 : 12);
+    return top === undefined ? guess : Math.max(guess, Math.ceil((top + 1) / 5) * 5);
   }
 
   private _mean(store: StoreConfig): number | undefined {
@@ -275,8 +283,14 @@ export class HeatOriginCard extends LitElement {
     return Math.max(0, (store.volume * 1.163 * (mean - floor)) / 1000);
   }
 
-  /** The measured fall, in kelvin per hour, or nothing when the recorder was quiet. */
+  /** The measured fall over the last twenty minutes, in kelvin per hour, or nothing when the recorder was quiet. */
   private _fall(store: StoreConfig): number | undefined {
+    const since = Date.now() - TREND_WINDOW;
+    return slopePerHour((this._trend[store.top] ?? []).filter((p) => p.at >= since));
+  }
+
+  /** The same over the last hour: slower, steadier, for the direction a store is going. */
+  private _drift(store: StoreConfig): number | undefined {
     return slopePerHour(this._trend[store.top] ?? []);
   }
 
@@ -547,10 +561,10 @@ export class HeatOriginCard extends LitElement {
 
     const stores: BoxModel[] = config.stores.map((store) => {
       const floor = this._floor(store);
-      const ceiling = this._ceiling(store, floor);
+      const top = this._num(store.top);
+      const ceiling = this._ceiling(store, floor, top);
       const span = ceiling - floor;
       const at = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - floor) / span)) : 0);
-      const top = this._num(store.top);
       const bottom = this._num(store.bottom) ?? top;
       const charging = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
       const draining = carried?.store === store;
@@ -566,9 +580,12 @@ export class HeatOriginCard extends LitElement {
       // Charging or discharging is the news and takes the slot. With nothing to report,
       // the store's own name is worth more there than the word "top" on every box.
       const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : store.name;
-      const fall = config.flow.trend !== "none" ? this._fall(store) : undefined;
-      const moving = fall !== undefined && Math.abs(fall) >= config.forecast_min_slope;
+      // Which way the store is going, off a whole hour: a tenth of a kelvin at a time is
+      // all a resting buffer moves, and the arrow says "holding" rather than nothing.
+      const drift = config.flow.trend !== "none" ? this._drift(store) : undefined;
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
+      // The scale's ends drop a ",0" nobody needs, so the names between them have room.
+      const end = (v: number) => `${v % 1 === 0 ? formatNumber(v, locale, 0) : formatTemp(v, locale)}°`;
       return {
         name: store.name,
         icon: store.icon,
@@ -587,7 +604,7 @@ export class HeatOriginCard extends LitElement {
                 top: at(top),
                 bottom: at(bottom ?? top),
                 marks,
-                scale: [digits(floor), digits(ceiling)] as [string, string],
+                scale: [end(floor), end(ceiling)] as [string, string],
                 // The set-point that is the top of the scale names its right-hand end.
                 ceilingName: (["eco", "target", "pv", "max"] as const)
                   .filter((key) => store.marks?.[key] !== undefined && Math.abs((store.marks?.[key] as number) - ceiling) < 0.05)
@@ -595,9 +612,12 @@ export class HeatOriginCard extends LitElement {
                 under: this._t("stores.under")
               },
         loop: this._loopOf(store),
-        trend: moving
-          ? { up: (fall as number) < 0, rate: config.flow.trend === "rate" ? `${this._one(Math.abs(fall as number))} K/h` : undefined }
-          : undefined,
+        trend:
+          drift === undefined
+            ? undefined
+            : Math.abs(drift) < DRIFT_MIN
+              ? { dir: "flat" }
+              : { dir: drift > 0 ? "down" : "up", rate: config.flow.trend === "rate" ? `${this._one(Math.abs(drift))} K/h` : undefined },
         hint: this._storeHint(store, floor, ceiling, usable)
       };
     });

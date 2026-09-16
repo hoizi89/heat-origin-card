@@ -53,7 +53,7 @@ export interface BoxModel {
   /** The room this circuit was asked for, and how far it is from it. */
   target?: { text: string; off: string; tone: string };
   /** Which way a store is going, from its own measured fall. */
-  trend?: { up: boolean; rate?: string };
+  trend?: { dir: "up" | "down" | "flat"; rate?: string };
   /** A circuit shown by its flow instead of its room: one line of detail. */
   sub?: string;
   /** The circulation drawing off this store: its temperature, and whether it runs. */
@@ -145,7 +145,14 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   let afterValue = tx + m.value.length * S.figure * 0.56;
   if (m.trend) {
     const ax = afterValue + 11;
-    parts.push(arrow(ax, y + S.val - 4, m.trend.up, m.trend.up ? m.tone : t.muted));
+    const ay = y + S.val - 4;
+    // Rising in the store's own colour, falling grey, holding a flat grey arrow.
+    parts.push(
+      m.trend.dir === "flat"
+        ? svg`<path d=${`M${ax - 4} ${ay} H${ax + 4.5} M${ax + 1.6} ${ay - 2.6} L${ax + 4.5} ${ay} L${ax + 1.6} ${ay + 2.6}`}
+            fill="none" stroke=${t.muted} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`
+        : arrow(ax, ay, m.trend.dir === "up", m.trend.dir === "up" ? m.tone : t.muted)
+    );
     afterValue = ax + 5;
     const room = rx - afterValue - (m.valueRight === undefined ? 0 : m.valueRight.length * S.small * 0.56);
     const wide = m.loop ? 0 : 1;
