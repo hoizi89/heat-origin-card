@@ -1,6 +1,6 @@
 import { LitElement, html, nothing, svg, type PropertyValues, type TemplateResult } from "lit";
 import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
-import { W as DRAW_W, T as TYPE, box, bypass, connector, dial, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
+import { W as DRAW_W, T as TYPE, box, branch, bypass, connector, dial, spine, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
 import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
 import { localize } from "./localize";
@@ -98,6 +98,19 @@ const R_PUMP = 30;
 /** The heat pump rides above the middle, which frees the corridor under it. */
 const PUMP_LIFT = 10;
 const TREND_WINDOW = 20 * 60 * 1000;
+
+/**
+ * Two columns. The heat pump takes the head of the left one and hot water hangs under
+ * it; the whole heating group — the buffer, then the circuits it feeds — owns the
+ * right one. Three things beside each other leave 116 px each; two leave 171, which is
+ * where the figures stop being cramped. And with the buffer standing next to the
+ * circuits it carries, its line to them is a run down the column instead of a route
+ * around the drawing.
+ */
+const COL_W = 171;
+const COL_R = 196;
+const COL_GAP = 8;
+const R_COL_PUMP = 44;
 
 interface Tip {
   x: number;
@@ -274,7 +287,10 @@ export class HeatOriginCard extends LitElement {
     if (store.usable_max !== undefined) return store.usable_max;
     const marks = store.marks ?? {};
     const highest = Math.max(...[marks.max, marks.pv, marks.target, marks.eco].filter((v): v is number => v !== undefined), -Infinity);
-    return Number.isFinite(highest) && highest > floor ? highest : floor + 12;
+    if (Number.isFinite(highest) && highest > floor) return highest;
+    // Hot water is nearly always marked; a heating buffer rarely is, and a heat pump
+    // pushes one to about twenty kelvin over what the circuits need.
+    return floor + (store.kind === "buffer" ? 20 : 12);
   }
 
   private _mean(store: StoreConfig): number | undefined {
@@ -294,6 +310,14 @@ export class HeatOriginCard extends LitElement {
   /** The measured fall, in kelvin per hour, or nothing when the recorder was quiet. */
   private _fall(store: StoreConfig): number | undefined {
     return slopePerHour(this._trend[store.top] ?? []);
+  }
+
+  /** The power being taken out of a store: its litres times how fast it is cooling. */
+  private _draw(store: StoreConfig): number | undefined {
+    const config = this._config as ResolvedConfig;
+    const fall = this._fall(store);
+    if (store.volume === undefined || fall === undefined || fall < config.forecast_min_slope) return undefined;
+    return (store.volume * 1.163 * fall) / 1000;
   }
 
   private _spanWords(hours: number): string {
@@ -537,8 +561,10 @@ export class HeatOriginCard extends LitElement {
         names.length === 1
           ? this._t("flow.bypass_to", { to: String(names[0]) })
           : this._t("flow.bypass_many", { n: String(names.length) });
+      const floor = this._floor(carried.store);
+      const lasts = config.flow.range && config.flow.layout === "columns" ? this._lasts(carried.store, floor) : undefined;
       chips.push(html`<span class="chip live" style="--tone:var(--ho-heating)"
-        @click=${() => this._moreInfo(carried.store.top)}><i></i>${what}</span>`);
+        @click=${() => this._moreInfo(carried.store.top)}><i></i>${what}${lasts ? ` · ${lasts}` : ""}</span>`);
     }
 
     return chips.length ? html`<span class="chips">${chips}</span>` : nothing;
@@ -707,6 +733,14 @@ export class HeatOriginCard extends LitElement {
       foot.push(html`<span>${mark("air", PALETTE.muted)}<span><b>${outdoor} °C</b> ${this._t("flow.outside")}</span></span>`);
     }
 
+    // What the circuits are pulling out of the buffer: its litres times how fast it
+    // falls. The split layout writes this on the pipe; two columns have no pipe.
+    const carried = config.flow.layout === "columns" ? this._fromBuffer() : undefined;
+    const drawn = carried ? this._draw(carried.store) : undefined;
+    if (drawn !== undefined) {
+      foot.push(html`<span style="color:${TONE.heating}">${mark("drop", TONE.heating)}<b>${formatPower(drawn, locale)} kW</b> ${this._t("flow.from_buffer")}</span>`);
+    }
+
     // The hot water store cools too, and the Eco mark is where the heat pump gives in.
     const due = this._hotWaterDue();
     if (due) foot.push(html`<span style="color:${TONE.hot_water}">${mark("drop", TONE.hot_water)}<b>${due}</b></span>`);
@@ -781,6 +815,105 @@ export class HeatOriginCard extends LitElement {
 
   private _renderFlow() {
     const config = this._config as ResolvedConfig;
+    if (config.flow.layout === "columns" && !this._narrow) return this._renderColumns();
+    return this._renderSplit();
+  }
+
+  /**
+   * The heating group on one side, hot water on the other. Nothing here is a special
+   * case: a buffer feeding the circuits and a heat pump feeding them travel the same
+   * upright, so what changes between the two is a colour and a direction.
+   */
+  private _renderColumns() {
+    const config = this._config as ResolvedConfig;
+    const mode = this._mode();
+    const live = this._live();
+    const running = isRunning(mode.kind);
+    const heat = running ? live.heat ?? 0 : 0;
+    const electric = running ? live.electric ?? 0 : 0;
+    const shares = running ? this._shares(live.electric) : undefined;
+    const hasBoth = Boolean(config.entities.heat_power && config.entities.electric_power);
+    const { stores, circuits } = this._boxes();
+    const carried = this._fromBuffer();
+
+    const hotIx = config.stores.map((st, i) => ({ st, i })).filter((x) => x.st.kind === "hot_water");
+    const bufIx = config.stores.map((st, i) => ({ st, i })).filter((x) => x.st.kind === "buffer");
+
+    const days = this._days();
+    const showClock = config.flow.ring !== "shares";
+    const rRing = showClock ? R_COL_PUMP + 7 : R_COL_PUMP;
+    const reach = showClock ? rRing + 9 : rRing + 4;
+
+    const cx = 1 + COL_W / 2;
+    const cy = 6 + reach;
+    const rightY = (i: number) => 6 + i * (BOX_H + COL_GAP);
+    const leftY = (i: number) => cy + reach + 22 + i * (BOX_H + COL_GAP);
+    const rightCount = bufIx.length + circuits.length;
+    const H = Math.max(rightY(rightCount - 1) + BOX_H, leftY(hotIx.length - 1) + BOX_H, cy + reach + 6) + 6;
+
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low" };
+    const parts: unknown[] = [];
+
+    // The pump to hot water: out of the ring at half past seven, clear of the moon.
+    hotIx.forEach((_, k) => {
+      parts.push(branch(cx, cy, reach, cx - 32, leftY(k), {
+        tone: STORE_TONE.hot_water,
+        surface: PALETTE.surface,
+        track: PALETTE.track,
+        live: running && mode.kind === "hot_water" && k === 0
+      }));
+    });
+
+    // The pump to the head of the heating column.
+    const headY = rightY(0) + BOX_H / 2;
+    parts.push(connector(cx + reach, cy, COL_R, headY, 1, {
+      tone: bufIx.length ? STORE_TONE.buffer : TONE.heating,
+      fed: running && mode.kind === "heating",
+      dashed: !running,
+      dim: !running && !carried,
+      track: PALETTE.track,
+      surface: PALETTE.surface
+    }));
+
+    // The manifold: every circuit hangs on one upright under the buffer.
+    const circuitYs = circuits.map((_, i) => rightY(bufIx.length + i) + BOX_H / 2);
+    if (circuitYs.length) {
+      const anyTaking = circuits.some((c) => c.on);
+      parts.push(spine(COL_R, headY, COL_R, circuitYs, {
+        tone: TONE.heating,
+        surface: PALETTE.surface,
+        track: PALETTE.track,
+        live: anyTaking && (Boolean(carried) || (running && mode.kind === "heating"))
+      }));
+    }
+
+    let uid = 0;
+    const draw = (model: BoxModel, x: number, y: number, w: number, entity: string | undefined) => {
+      uid += 1;
+      parts.push(box(model, x, y, w, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
+    };
+    hotIx.forEach((x, k) => draw(stores[x.i], 1, leftY(k), COL_W, x.st.top));
+    bufIx.forEach((x, k) => draw(stores[x.i], COL_R, rightY(k), DRAW_W - COL_R - 1, x.st.top));
+    circuits.forEach((model, i) => {
+      const circuit = config.circuits[i];
+      draw(model, COL_R, rightY(bufIx.length + i), DRAW_W - COL_R - 1, circuit?.pump ?? circuit?.state ?? circuit?.flow ?? circuit?.temperature);
+    });
+
+    if (showClock) parts.push(this._dial(cx, cy, rRing, days));
+    parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_COL_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
+    if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_COL_PUMP, heat, electric, shares));
+    parts.push(this._centre(cx, cy, heat, electric, live.cop, running, mode));
+
+    return html`
+      <div class="section">
+        <svg viewBox="0 0 ${DRAW_W} ${H}" role="img" aria-label=${this._modeLabel(mode.kind, mode.raw)}>${parts}</svg>
+        ${this._footBlock(running)}
+      </div>
+    `;
+  }
+
+  private _renderSplit() {
+    const config = this._config as ResolvedConfig;
     const mode = this._mode();
     const live = this._live();
     const running = isRunning(mode.kind);
@@ -832,10 +965,12 @@ export class HeatOriginCard extends LitElement {
     if (carried && buffered.length) {
       const bufferIndex = config.stores.indexOf(carried.store);
       const floor = this._floor(carried.store);
-      const label = config.flow.range ? this._lasts(carried.store, floor) : undefined;
+      const lasts = config.flow.range ? this._lasts(carried.store, floor) : undefined;
+      const kw = config.flow.range ? this._draw(carried.store) : undefined;
+      const label = [kw === undefined ? "" : `${formatPower(kw, this._locale)} kW`, lasts ?? ""].filter(Boolean).join(" · ");
       parts.push(bypass(leftEdge, midOf(bufferIndex), rightEdge, buffered, {
         cx, cy, ring: rRing, tone: TONE.heating, surface: PALETTE.surface,
-        label, hint: this._t("forecast.how")
+        label: label || undefined, hint: this._t("forecast.how")
       }));
     }
 

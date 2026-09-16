@@ -80,11 +80,26 @@ describe("the flow", () => {
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(1);
   });
 
-  it("splits the takers: stores left of the heat pump, circuits right, sources above and below", async () => {
+  const boxX = (root: ShadowRoot, name: string) => {
+    const rect = [...root.querySelectorAll(".section svg rect")].find((r) => r.parentElement?.textContent?.includes(name));
+    return Number(rect?.getAttribute("x"));
+  };
+
+  it("puts the heating group in one column and hot water in the other", async () => {
     const { root } = await mount(FULL_CONFIG);
-    const box = (name: string) =>
-      [...root.querySelectorAll(".section svg rect")].find((r) => r.parentElement?.textContent?.includes(name)) as Element;
-    const x = (name: string) => Number(box(name).getAttribute("x"));
+    // The buffer belongs with the circuits it feeds, not with the hot water store.
+    expect(boxX(root, "Warmwasser")).toBeLessThan(100);
+    expect(boxX(root, "Puffer")).toBeGreaterThan(150);
+    expect(boxX(root, "FBH EG")).toBeGreaterThan(150);
+    expect(boxX(root, "Heizkörper OG")).toBeGreaterThan(150);
+    // Two things beside each other, so every box is half again as wide as in a split.
+    const rect = [...root.querySelectorAll(".section svg rect")].find((r) => r.parentElement?.textContent?.includes("FBH EG"));
+    expect(Number(rect?.getAttribute("width"))).toBeGreaterThan(160);
+  });
+
+  it("splits stores left of the heat pump and circuits right when asked", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
+    const x = (name: string) => boxX(root, name);
     expect(x("Warmwasser")).toBeLessThan(100);
     expect(x("Puffer")).toBeLessThan(100);
     expect(x("FBH EG")).toBeGreaterThan(200);

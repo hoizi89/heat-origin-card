@@ -145,10 +145,13 @@ export interface ExtraFigure {
 
 export interface FlowOptions {
   /**
-   * `split`: stores left, circuits right, electricity and ambient heat as lines
-   * above and below the heat pump. `stacked`: sources left, all takers right.
+   * `columns`: the heat pump heads the left column with hot water under it, and the
+   * heating group — the buffer, then the circuits it feeds — owns the right one. Two
+   * things beside each other instead of three, so the boxes are half again as wide and
+   * the buffer's line to its circuits is a run down the column. `split`: stores left,
+   * circuits right, the heat pump between them.
    */
-  layout?: "split" | "stacked";
+  layout?: "columns" | "split";
   /** Flow, return, spread and volume under the flow drawing. */
   spread?: boolean;
   /** Flow, return and spread inside each circuit's box. */

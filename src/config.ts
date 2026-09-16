@@ -100,7 +100,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     modes: resolveModes(config.modes),
     ...foldCirculation(config),
     flow: {
-      layout: flow.layout === "stacked" ? "stacked" : "split",
+      layout: flow.layout === "split" ? "split" : "columns",
       spread: flow.spread ?? true,
       circuit_details: flow.circuit_details ?? false,
       extras: flow.extras ?? [],
@@ -258,6 +258,18 @@ export function getConfigForm(locale: string) {
       name: "flow",
       title: t("editor.options"),
       schema: [
+        {
+          name: "layout",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "columns", label: t("editor.layout_columns") },
+                { value: "split", label: t("editor.layout_split") }
+              ]
+            }
+          }
+        },
         {
           name: "detail",
           selector: {

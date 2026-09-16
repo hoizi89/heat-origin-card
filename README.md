@@ -104,7 +104,7 @@ flow:
 | `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |
 | `circuits[].short`, `stores[].short` | guessed | The mark under the symbol, usually the storey. |
 | `stores[].usable_max` | highest mark | What the level bar calls full. |
-| `flow.layout` | `split` | `split`: stores left, circuits right, sources above and below the heat pump. `stacked`: sources left, every taker right. With a single taker the drawing is always stacked. |
+| `flow.layout` | `columns` | `columns`: the heat pump heads the left column with hot water under it, and the heating group — the buffer, then the circuits it feeds — owns the right one. Two things beside each other instead of three, so a box is 171 px wide rather than 116, and the buffer reaches its circuits down the column instead of around the drawing. `split`: stores left, circuits right, the heat pump between them. |
 | `flow.spread` | `true` | Flow, return, spread and volume under the drawing. |
 | `flow.circuit_details` | `false` | Flow, return and spread inside each circuit. |
 | `flow.extras` | | Further figures, `{ entity, name, running_only }`; `running_only` hides a figure at rest, e.g. hot gas. |

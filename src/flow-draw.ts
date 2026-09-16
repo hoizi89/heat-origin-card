@@ -250,6 +250,58 @@ export function bypass(fromX: number, fromY: number, toX: number, ys: number[], 
 }
 
 /**
+ * The heating group's own manifold: one upright inside the column, a spur into every
+ * box hanging off it, a node where each spur leaves. Whether the heat comes from the
+ * pump above or from the buffer at the head of the column, it travels the same run —
+ * which is what the house does, and why this arrangement needs no special case for a
+ * discharging buffer.
+ */
+export function spine(fromX: number, fromY: number, toX: number, ys: number[], o: {
+  tone: string;
+  surface: string;
+  live: boolean;
+  track: string;
+}) {
+  const sx = toX - 13;
+  const last = ys[ys.length - 1];
+  const r = 6;
+  let d = `M${fromX} ${fromY} H${sx + r} Q${sx} ${fromY} ${sx} ${fromY + r} V${last - r} Q${sx} ${last} ${sx + r} ${last} H${toX}`;
+  for (const y of ys.slice(0, -1)) d += ` M${sx} ${y} H${toX}`;
+
+  const nodes = ys.slice(0, -1).map((y) => svg`<circle cx=${sx} cy=${y} r="3" fill=${o.live ? o.tone : o.track}/>`);
+  if (!o.live) {
+    return svg`<path d=${d} fill="none" stroke=${o.track} stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${nodes}`;
+  }
+  return svg`
+    <path d=${d} fill="none" stroke=${o.surface} stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d=${d} fill="none" stroke=${o.tone} stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d=${d} fill="none" stroke="#fff" stroke-width="2.2" opacity="0.8" class="flow-dash"/>
+    ${nodes}`;
+}
+
+/**
+ * The line from the heat pump down to the hot water store under it. It leaves the ring
+ * at about half past seven rather than straight down, because straight down is where
+ * the dial puts midnight, and the moon was standing in the flow.
+ */
+export function branch(cx: number, cy: number, reach: number, toX: number, toY: number, o: {
+  tone: string;
+  surface: string;
+  live: boolean;
+  track: string;
+}) {
+  const a = (114 * Math.PI) / 180;
+  const ox = cx + Math.cos(a) * reach;
+  const oy = cy + Math.sin(a) * reach;
+  const d = `M${ox.toFixed(1)} ${oy.toFixed(1)} C ${(ox - 6).toFixed(1)} ${(oy + 14).toFixed(1)}, ${toX} ${toY - 16}, ${toX} ${toY}`;
+  if (!o.live) return svg`<path d=${d} fill="none" stroke=${o.track} stroke-width="2" stroke-linecap="round"/>`;
+  return svg`
+    <path d=${d} fill="none" stroke=${o.surface} stroke-width="7.5" stroke-linecap="round"/>
+    <path d=${d} fill="none" stroke=${o.tone} stroke-width="4.5" stroke-linecap="round"/>
+    <path d=${d} fill="none" stroke="#fff" stroke-width="2.4" opacity="0.85" class="flow-dash"/>`;
+}
+
+/**
  * The day around the heat pump, on the dial Power Origin uses: the hour angle starts
  * at the bottom, so the day climbs the left side to noon at the top and falls down the
  * right. It reads as the sun's path, which is why the sun stands at the top and the
