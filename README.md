@@ -2,9 +2,10 @@
 
 A heat pump card for Home Assistant. Where the heat comes from, where it goes, and how the day went. The sister card to [Power Origin](https://github.com/hoizi89/power-origin-card).
 
-- **Heat flow** — the heat pump in the middle, the stores on its left and the heating circuits on its right; electricity and ambient heat stand as one line each above and below it. Line widths follow the kilowatts; the electricity wears the colour of its source as in Power Origin (sun, battery, grid), the ambient heat is green, and the ring shows both shares. Circuits show their own state, room temperature and, optionally, flow, return and spread. A running circulation pump puts a small loop mark on the hot water. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
+- **Heat flow** — the heat pump in the middle, the stores on its left and the heating circuits on its right. Every box carries a symbol for what it is and the storey it serves, a heading over each figure, and a foot of its own: the store's level, the circuit's return and spread. A store fills from its usable minimum to its highest mark, in two tones, so the paler part is the layering. Around the heat pump runs the day as a dial — midnight at the bottom, noon at the top, the hours of daylight arcing over it — and inside that the shares of ambient heat and electricity. Standing still, the centre tells the last run. In a column narrower than 340 px the takers become a list.
+- **The buffer as a source** — when the heat pump is not heating and a circuit is still taking heat, that heat comes out of the buffer, and the card draws it: a line from the buffer, routed past the heat pump, with an arrow at the circuit it feeds and a manifold when it feeds two. On the line stands how much longer the buffer can carry them, worked out from its own measured fall rather than from a heat load nobody has. The same measurement says when hot water will be due again.
 - **Day band** — yesterday and today as 24-hour bands coloured by what the heat pump did, with PV power above. Starts, short runs and running time are counted from the history; hover a short-run marker for its time. Under the running times of heating and hot water stands the day's performance factor next to the month's, with a small arrow where they part by half a point or more. A notice appears only when the heat pump cycles.
-- **Storage** — each store's temperature first, the tank as a level gauge of the same height for every store (empty at the usable minimum, full at the highest mark, the other marks as notches), and with the volume the heat above the usable minimum in kWh.
+- **Storage** — a section that repeats the flow's own gauges, so it stays off while the flow is drawn. Switch the flow off, or ask for `sections.stores`, and each store gets its tank, its marks and its usable heat in full.
 - **Compact** — one row: the state, the temperature that matters in it, and today as a thin band.
 
 Everything shown is measured. Set-points are entered as numbers in the card, because many integrations report them wrongly.
@@ -15,7 +16,9 @@ Until the card is in HACS, add this repository as a custom repository of type *D
 
 ## Configuration
 
-Only `entities.mode` is required. The visual editor covers the sensors and switches; circuits, stores, extra figures and state words are set in YAML.
+Only `entities.mode` is required. The card reads the rest of what it can out of what is already there: a circuit named "FBH EG" gets the underfloor symbol and the mark EG, "Heizkörper OG" a radiator and OG, and a buffer measures itself against the flow of the warmest circuit it is feeding instead of a fixed number that is wrong in September and wrong again in January.
+
+The visual editor has two dials — **Detail** and what the middle of the circle reads — plus the sensors. Circuits, stores, extra figures and state words are set in YAML.
 
 ```yaml
 type: custom:heat-origin-card
@@ -83,9 +86,24 @@ flow:
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |
 | `circuits[].temperature` | | One temperature, for loops without flow and return. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh. |
-| `stores[].usable_min` | 40 hot water, 30 buffer | °C below which the heat counts as not usable. |
+| `stores[].usable_min` | 40 hot water, the warmest running circuit's flow for a buffer | °C below which the heat counts as not usable. |
 | `stores[].kind` | guessed from the name | `hot_water` or `buffer`. |
 | `stores[].marks` | | `eco`, `target`, `pv`, `max` as numbers. |
+| `flow.detail` | `normal` | `low` or `high`: moves labels, circuit face, store scale and foot line together. Every key below overrules it. |
+| `flow.labels` | `short` | `icon` for the symbol alone, `name` for the name as before. |
+| `flow.circuit` | `room` | The room as the figure, flow and return beside it as a pair. `flow` puts the flow first instead. |
+| `flow.gauge` | `bar` | `box` fills the whole box instead of the bar in its foot. |
+| `flow.ring` | `both` | `clock` for the day alone, `shares` for the split alone. |
+| `flow.sun` | `true` | The hours of daylight as an arc outside the dial. |
+| `flow.centre` | `heat` | `power`, or `both` — then the performance factor moves into the foot. |
+| `flow.bypass` | `true` | Draw the buffer feeding the circuits. |
+| `flow.range` | `true` | How long it can keep doing so, on the line itself. |
+| `flow.origin` | off | Name the buffer in the circuit's box as well. |
+| `flow.foot` | `full` | `drive` keeps only electricity and ambient heat, `none` nothing. |
+| `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts. |
+| `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |
+| `circuits[].short`, `stores[].short` | guessed | The mark under the symbol, usually the storey. |
+| `stores[].usable_max` | highest mark | What the level bar calls full. |
 | `flow.layout` | `split` | `split`: stores left, circuits right, sources above and below the heat pump. `stacked`: sources left, every taker right. With a single taker the drawing is always stacked. |
 | `flow.spread` | `true` | Flow, return, spread and volume under the drawing. |
 | `flow.circuit_details` | `false` | Flow, return and spread inside each circuit. |

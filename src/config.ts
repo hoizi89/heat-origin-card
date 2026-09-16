@@ -1,8 +1,39 @@
+import { guessCircuitIcon, guessShort, guessStoreIcon, isIconName, type IconName } from "./icons";
 import { localize } from "./localize";
 import { resolveModes } from "./modes";
-import type { HeatOriginCardConfig, ResolvedConfig, SectionName, StoreKind } from "./types";
+import type {
+  CircuitFace,
+  DetailLevel,
+  FootStyle,
+  HeatOriginCardConfig,
+  LabelStyle,
+  ResolvedConfig,
+  SectionName,
+  StoreKind
+} from "./types";
 
 export const CARD_TYPE = "heat-origin-card";
+
+/**
+ * Three steps of one dial. The choices below hang together — a card asked for few
+ * figures wants few of them in every box — so one setting moves them all, and the
+ * single keys under `flow` override whatever the step put there.
+ */
+const DETAIL: Record<DetailLevel, {
+  labels: LabelStyle;
+  circuit: CircuitFace;
+  origin: boolean;
+  foot: FootStyle;
+  scale: boolean;
+}> = {
+  low: { labels: "icon", circuit: "room", origin: false, foot: "drive", scale: false },
+  normal: { labels: "short", circuit: "room", origin: false, foot: "full", scale: true },
+  high: { labels: "short", circuit: "room", origin: true, foot: "full", scale: true }
+};
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
 export const SECTIONS: SectionName[] = ["flow", "day", "stores"];
 
 export function assertConfig(config: HeatOriginCardConfig | undefined, locale?: string): void {
@@ -22,11 +53,20 @@ function guessKind(name: string): StoreKind {
  * moves onto the first hot water store and leaves the flow.
  */
 function foldCirculation(config: HeatOriginCardConfig) {
-  const circuits = (config.circuits ?? []).map((c) => ({
-    ...c,
-    kind: c.kind ?? (/zirkulation|circulation/i.test(c.name) ? ("circulation" as const) : ("heating" as const))
-  }));
-  const stores = (config.stores ?? []).map((s) => ({ ...s, kind: s.kind ?? guessKind(s.name) }));
+  /** What is written wins; what is not is read out of the name. */
+  const dress = <T extends { name: string; icon?: string; short?: string }>(item: T, fallback: IconName) => ({
+    ...item,
+    icon: isIconName(item.icon) ? item.icon : fallback,
+    short: item.short ?? guessShort(item.name)
+  });
+  const circuits = (config.circuits ?? []).map((c) => {
+    const kind = c.kind ?? (/zirkulation|circulation/i.test(c.name) ? ("circulation" as const) : ("heating" as const));
+    return { ...dress(c, kind === "circulation" ? "loop" : guessCircuitIcon(c.name)), kind };
+  });
+  const stores = (config.stores ?? []).map((s) => {
+    const kind = s.kind ?? guessKind(s.name);
+    return { ...dress(s, guessStoreIcon(kind)), kind };
+  });
   const hotWater = stores.find((s) => s.kind === "hot_water");
   const loops = circuits.filter((c) => c.kind === "circulation");
   if (hotWater && loops.length) {
@@ -42,6 +82,8 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   const sections = config.sections ?? {};
   const chosen = (sections.order ?? []).filter((s): s is SectionName => SECTIONS.includes(s));
   const days = config.day?.days === 1 ? 1 : 2;
+  const flow = config.flow ?? {};
+  const step = DETAIL[oneOf(flow.detail, ["low", "normal", "high"] as const, "normal")];
   return {
     type: config.type,
     title: config.title,
@@ -49,18 +91,32 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     sections: {
       flow: sections.flow ?? true,
       day: sections.day ?? true,
-      stores: sections.stores ?? Boolean(config.stores?.length),
+      // Once the flow draws each store as a level gauge, a section repeating it below
+      // says nothing new — so it only comes on by itself when the flow is off.
+      stores: sections.stores ?? (Boolean(config.stores?.length) && (config.sections?.flow === false)),
       order: [...chosen, ...SECTIONS.filter((s) => !chosen.includes(s))]
     },
     entities: config.entities,
     modes: resolveModes(config.modes),
     ...foldCirculation(config),
     flow: {
-      layout: config.flow?.layout === "stacked" ? "stacked" : "split",
-      spread: config.flow?.spread ?? true,
-      circuit_details: config.flow?.circuit_details ?? false,
-      extras: config.flow?.extras ?? []
+      layout: flow.layout === "stacked" ? "stacked" : "split",
+      spread: flow.spread ?? true,
+      circuit_details: flow.circuit_details ?? false,
+      extras: flow.extras ?? [],
+      detail: oneOf(flow.detail, ["low", "normal", "high"] as const, "normal"),
+      labels: oneOf(flow.labels, ["short", "icon", "name"] as const, step.labels),
+      circuit: oneOf(flow.circuit, ["room", "flow"] as const, step.circuit),
+      gauge: oneOf(flow.gauge, ["bar", "box"] as const, "bar"),
+      origin: flow.origin ?? step.origin,
+      bypass: flow.bypass ?? true,
+      range: flow.range ?? true,
+      ring: oneOf(flow.ring, ["both", "clock", "shares"] as const, "both"),
+      sun: flow.sun ?? true,
+      centre: oneOf(flow.centre, ["heat", "power", "both"] as const, "heat"),
+      foot: oneOf(flow.foot, ["full", "drive", "none"] as const, step.foot)
     },
+    forecast_min_slope: config.forecast_min_slope ?? 0.4,
     day: {
       days,
       short_run: config.day?.short_run ?? 120,
@@ -96,7 +152,9 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
       ...config.flow,
       layout: resolved.flow.layout,
       spread: resolved.flow.spread,
-      circuit_details: resolved.flow.circuit_details
+      circuit_details: resolved.flow.circuit_details,
+      detail: resolved.flow.detail,
+      centre: resolved.flow.centre
     },
     day: {
       ...config.day,
@@ -201,19 +259,32 @@ export function getConfigForm(locale: string) {
       title: t("editor.options"),
       schema: [
         {
-          name: "layout",
+          name: "detail",
           selector: {
             select: {
               mode: "dropdown",
               options: [
-                { value: "split", label: t("editor.layout_split") },
-                { value: "stacked", label: t("editor.layout_stacked") }
+                { value: "low", label: t("editor.detail_low") },
+                { value: "normal", label: t("editor.detail_normal") },
+                { value: "high", label: t("editor.detail_high") }
               ]
             }
           }
         },
-        { name: "spread", selector: { boolean: {} } },
-        { name: "circuit_details", selector: { boolean: {} } }
+        {
+          name: "centre",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "heat", label: t("editor.centre_heat") },
+                { value: "power", label: t("editor.centre_power") },
+                { value: "both", label: t("editor.centre_both") }
+              ]
+            }
+          }
+        },
+        { name: "spread", selector: { boolean: {} } }
       ]
     },
     {
@@ -267,6 +338,8 @@ export function getConfigForm(locale: string) {
     layout: t("editor.layout"),
     spread: t("editor.spread"),
     circuit_details: t("editor.circuit_details"),
+    detail: t("editor.detail"),
+    centre: t("editor.centre"),
     days: t("editor.days"),
     short_run: t("editor.short_run"),
     cycling_from: t("editor.cycling_from")
@@ -277,7 +350,12 @@ export function getConfigForm(locale: string) {
     // The flow temperature sensor and the flow section share a name; only the sensor has an entity selector.
     computeLabel: (item: { name: string; selector?: { entity?: unknown } }) =>
       item.name === "flow" && item.selector?.entity ? t("editor.flow") : labels[item.name] ?? item.name,
-    computeHelper: (item: { name: string }) => (item.name === "mode" ? t("editor.help_yaml") : undefined)
+    computeHelper: (item: { name: string }) => {
+      if (item.name === "mode") return t("editor.help_yaml");
+      if (item.name === "detail") return t("editor.help_detail");
+      if (item.name === "centre") return t("editor.help_centre");
+      return undefined;
+    }
   };
 }
 

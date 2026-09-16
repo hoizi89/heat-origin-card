@@ -53,7 +53,7 @@ describe("the flow", () => {
 
   it("colours the electricity by where it comes from and names the source", async () => {
     const { root } = await mount(FULL_CONFIG);
-    expect(text(root.querySelector(".source-line") as Element)).toContain("1,73 kW · PV");
+    expect(text(root.querySelector(".foot") as Element)).toContain("1,73 kW PV");
     const grid = await mount(
       FULL_CONFIG,
       makeHass({
@@ -61,9 +61,7 @@ describe("the flow", () => {
         [IDS.grid_power]: { entity_id: IDS.grid_power, state: "2700", attributes: { unit_of_measurement: "W" } }
       })
     );
-    expect(text(grid.root.querySelector(".source-line") as Element)).toContain("· Netz");
-    const stacked = await mount({ ...FULL_CONFIG, flow: { layout: "stacked" } });
-    expect(text(stacked.root)).toContain("Strom · PV");
+    expect(text(grid.root.querySelector(".foot") as Element)).toContain("Netz");
   });
 
   it("draws the heat flowing to hot water and the circuits with their words, the circulation only as a mark on the hot water", async () => {
@@ -71,7 +69,8 @@ describe("the flow", () => {
     const t = text(root);
     expect(t).toContain("6,6");
     expect(t).toContain("COP 3,8");
-    expect(t).toContain("Sommer");
+    // The circuit's own word survives as its label, in capitals like every label.
+    expect(t).toContain("SOMMER");
     // A circuit in summer mode moves no water; its spread would be a number without meaning.
     expect(t).not.toContain("25,8/24,7");
     expect(t).toContain("24,5°");
@@ -90,20 +89,20 @@ describe("the flow", () => {
     expect(x("Puffer")).toBeLessThan(100);
     expect(x("FBH EG")).toBeGreaterThan(200);
     expect(x("Heizkörper OG")).toBeGreaterThan(200);
-    const lines = [...root.querySelectorAll(".source-line")].map((l) => text(l));
-    expect(lines).toEqual(["1,73 kW · PV", "4,88 kW · 20,2 °C"]);
+    const foot = text(root.querySelector(".foot") as Element);
+    expect(foot).toContain("1,73 kW PV");
+    expect(foot).toContain("4,88 kW Luft 20,2 °C");
   });
 
-  it("keeps only the outdoor temperature in the middle while standing still", async () => {
+  it("keeps only the outdoor temperature in the foot while standing still", async () => {
     const { root } = await mount(FULL_CONFIG, idle());
-    const lines = [...root.querySelectorAll(".source-line")].map((l) => text(l));
-    expect(lines).toEqual(["20,2 °C außen"]);
+    expect(text(root.querySelector(".foot") as Element)).toContain("20,2 °C außen");
   });
 
   it("puts flow, return, spread, volume and extra figures under the flow while running", async () => {
     const { root } = await mount(FULL_CONFIG);
     const foot = text(root.querySelector(".section .foot") as Element);
-    expect(foot).toContain("Spreizung 3,2 K");
+    expect(foot).toContain("WP 67,2 → 63,9 °C · Δ 3,2 K");
     expect(foot).toContain("1.752 l/h");
     expect(foot).toContain("Heißgas 87,5 °C");
   });
@@ -113,7 +112,21 @@ describe("the flow", () => {
       "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} }
     });
     const { root } = await mount(FULL_CONFIG, hass);
-    expect(text(root)).toContain("25,8/24,7 · Δ 1,1 K");
+    const t = text(root);
+    // Flow up, return down, and the spread under them.
+    expect(t).toContain("25,8°");
+    expect(t).toContain("24,7°");
+    expect(t).toContain("Δ 1,1 K");
+  });
+
+  it("draws the buffer feeding a circuit the heat pump is not heating, and says how long for", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} }
+    });
+    const { root } = await mount(FULL_CONFIG, hass);
+    // The heat pump is making hot water; the floor loop is taking it from the buffer.
+    const chips = [...root.querySelectorAll(".chip")].map((c) => c.textContent?.replace(/\s+/g, " ") ?? "");
+    expect(chips.some((c) => c.includes("Puffer → FBH EG"))).toBe(true);
   });
 
   it("leaves the spread out when asked", async () => {
@@ -125,9 +138,9 @@ describe("the flow", () => {
   it("tells the last run while standing still instead of zeros", async () => {
     const { root } = await mount(FULL_CONFIG, idle());
     const t = text(root);
-    // Standby since the run ended at 13:39, even if a block turned into standby later.
-    expect(root.querySelector(".chip")?.textContent?.replace(/\s+/g, " ")).toContain("Bereit · seit 13:39");
-    expect(t).toContain("zuletzt");
+    // A resting heat pump gets no chip: the middle of the circle says what it last did.
+    expect(root.querySelector(".chip")).toBeNull();
+    expect(t).toContain("ZULETZT");
     expect(t).toContain("40 min");
     expect(t).toContain("Heute 3 Starts");
     expect(t).not.toContain("0,00 kW");
@@ -180,13 +193,15 @@ describe("performance factors", () => {
       [IDS.mode]: { entity_id: IDS.mode, state: "CH", attributes: {} }
     });
     const { root } = await mount({ ...FULL_CONFIG, source: "ground", entities: { ...FULL_CONFIG.entities, outdoor: undefined } }, hass);
-    expect(text(root.querySelector(".section svg") as Element)).toContain("Erdreich");
+    expect(text(root.querySelector(".foot") as Element)).toContain("Erdreich");
   });
 });
 
 describe("storage", () => {
+  /** The section is a repeat of the flow's own gauges, so every test here asks for it. */
+  const WITH_STORES = { ...FULL_CONFIG, sections: { stores: true } };
   it("shows the temperature first, the layering, the marks and the usable heat from the volume", async () => {
-    const { root } = await mount(FULL_CONFIG);
+    const { root } = await mount(WITH_STORES);
     const stores = [...root.querySelectorAll(".store")].map((s) => text(s));
     expect(stores[0]).toContain("Warmwasser 57,6 °C lädt unten 57,6 · gleichmäßig");
     expect(stores[0]).toContain("6,1 kWh über 40 °C");
@@ -211,7 +226,7 @@ describe("storage", () => {
       circuits: [...(FULL_CONFIG.circuits ?? []), { name: "Zirkulation", pump: "switch.zirkulationspumpe", temperature: "sensor.lambdawp_boil1_actual_circulation_temperature" }],
       stores: (FULL_CONFIG.stores ?? []).map(({ circulation, circulation_pump, ...s }) => s)
     };
-    const { root } = await mount(legacy);
+    const { root } = await mount({ ...legacy, sections: { stores: true } });
     expect(text(root.querySelector(".section svg") as Element)).not.toContain("Zirkulation 34,3");
     expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation läuft");
     expect(text(root.querySelector(".store") as Element)).toContain("Zirkulation 34,3 °C · läuft");
@@ -226,7 +241,7 @@ describe("storage", () => {
         attributes: { unit_of_measurement: "°C" }
       }
     });
-    const { root } = await mount(FULL_CONFIG, hass);
+    const { root } = await mount(WITH_STORES, hass);
     expect(text(root.querySelector(".store") as Element)).toContain("2,5 K unter Soll");
   });
 });

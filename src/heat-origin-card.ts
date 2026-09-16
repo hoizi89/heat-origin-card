@@ -1,5 +1,8 @@
 import { LitElement, html, nothing, svg, type PropertyValues, type TemplateResult } from "lit";
 import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
+import { W as DRAW_W, T as TYPE, box, bypass, connector, dial, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
+import { icon as iconMark } from "./icons";
+import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
 import { localize } from "./localize";
 import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
@@ -65,24 +68,41 @@ const STORE_TONE: Record<StoreKind, string> = {
 
 const ON = new Set(["on", "true", "running", "open", "1", "heat", "heating"]);
 
+/** A symbol for a foot line: its own element, because the foot is HTML, not a drawing. */
+function mark(kind: "bolt" | "air" | "drop", tone: string) {
+  const body =
+    kind === "bolt"
+      ? svg`<path d="M9.2 1 L3.2 9.2 H7.4 L6.4 15 L12.8 6.6 H8.6 Z" fill=${tone}/>`
+      : kind === "air"
+        ? svg`<path d="M1.5 5 H9 a2.6 2.6 0 1 0 -2.6 -2.6 M1.5 8.5 H12.6 M1.5 12 H7.4 a2.6 2.6 0 1 1 -2.6 2.6"
+            fill="none" stroke=${tone} stroke-width="1.6" stroke-linecap="round"/>`
+        : svg`<path d="M8 1.4 C11.4 5.9, 12.9 8.4, 12.9 11.1 A4.9 4.9 0 0 1 3.1 11.1 C3.1 8.4, 4.6 5.9, 8 1.4 Z"
+            fill="none" stroke=${tone} stroke-width="1.7" stroke-linejoin="round"/>`;
+  return html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">${body}</svg>`;
+}
+
+const PALETTE: Tone = {
+  ink: "var(--ho-ink)",
+  muted: "var(--ho-muted)",
+  hairline: "var(--ho-hairline)",
+  track: "var(--ho-track)",
+  surface: "var(--ho-surface)",
+  sun: "var(--ho-sun)"
+};
+
+/** The drawing's grid. The blocks set the height; the circle only has to fit inside it. */
+const BOX_H = 64;
+const BOX_GAP = 28;
+const BOX_W = 116;
+const R_PUMP = 30;
+/** The heat pump rides above the middle, which frees the corridor under it. */
+const PUMP_LIFT = 10;
+const TREND_WINDOW = 20 * 60 * 1000;
+
 interface Tip {
   x: number;
   y: number;
   text: TemplateResult;
-}
-
-interface Sink {
-  name: string;
-  /** The store's circulation pump is running. */
-  circulating?: boolean;
-  value: string;
-  detail?: string;
-  right?: string;
-  active: boolean;
-  /** Heat is flowing to it from the heat pump right now. */
-  fed: boolean;
-  tone: string;
-  entity?: string;
 }
 
 type Shares = Partial<Record<ElectricSource, number>>;
@@ -94,7 +114,8 @@ export class HeatOriginCard extends LitElement {
     _points: { state: true },
     _pv: { state: true },
     _tip: { state: true },
-    _narrow: { state: true }
+    _narrow: { state: true },
+    _trend: { state: true }
   };
 
   static styles = cardStyles;
@@ -103,6 +124,8 @@ export class HeatOriginCard extends LitElement {
   private _config?: ResolvedConfig;
   private _points?: StatePoint[];
   private _pv: Record<number, Array<number | undefined>> = {};
+  /** Each store's own temperature over the last while, for how long it still lasts. */
+  private _trend: Record<string, TrendPoint[]> = {};
   private _tip?: Tip;
   private _narrow = false;
   private _fetchedAt = 0;
@@ -167,16 +190,34 @@ export class HeatOriginCard extends LitElement {
     const now = new Date();
     const start = new Date(midnight(now) - (config.day.days === 2 ? DAY : 0));
     try {
-      const history = await hass.callWS({
-        type: "history/history_during_period",
-        start_time: start.toISOString(),
-        end_time: now.toISOString(),
-        entity_ids: [config.entities.mode],
-        minimal_response: true,
-        no_attributes: true,
-        significant_changes_only: false
-      });
+      const tops = config.stores.map((store) => store.top).filter(Boolean);
+      const since = Date.now() - TREND_WINDOW;
+      const [history, trends] = await Promise.all([
+        hass.callWS({
+          type: "history/history_during_period",
+          start_time: start.toISOString(),
+          end_time: now.toISOString(),
+          entity_ids: [config.entities.mode],
+          minimal_response: true,
+          no_attributes: true,
+          significant_changes_only: false
+        }),
+        tops.length
+          ? hass.callWS({
+              type: "history/history_during_period",
+              start_time: new Date(since).toISOString(),
+              end_time: now.toISOString(),
+              entity_ids: tops,
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false
+            })
+          : Promise.resolve(undefined)
+      ]);
       this._points = parseHistory(history, config.entities.mode);
+      const trend: Record<string, TrendPoint[]> = {};
+      for (const id of tops) trend[id] = parseTrend(trends, id, since);
+      this._trend = trend;
     } catch {
       this._points = this._points ?? [];
     }
@@ -205,6 +246,117 @@ export class HeatOriginCard extends LitElement {
     }
     this._fetchedAt = Date.now();
     this._fetching = false;
+  }
+
+  // ─── how long a store lasts ────────────────────────────────
+
+  /**
+   * The lowest temperature still worth something. A shower needs 40 °C whatever the
+   * season, so hot water keeps its fixed floor; a buffer is only useful while it is
+   * warmer than the circuit it feeds, and that moves with the weather. Measuring a
+   * buffer against a fixed 30 °C says it is empty on a September morning when it is
+   * carrying the house, and that it is full in January when it cannot.
+   */
+  private _floor(store: StoreConfig & { kind: StoreKind }): number {
+    if (store.usable_min !== undefined) return store.usable_min;
+    if (store.kind === "hot_water") return 40;
+    const config = this._config as ResolvedConfig;
+    let warmest: number | undefined;
+    for (const circuit of config.circuits) {
+      if (circuit.kind !== "heating" || !this._circuitActive(circuit)) continue;
+      const flow = this._num(circuit.flow ?? circuit.temperature);
+      if (flow !== undefined && (warmest === undefined || flow > warmest)) warmest = flow;
+    }
+    return warmest ?? 30;
+  }
+
+  private _ceiling(store: StoreConfig & { kind: StoreKind }, floor: number): number {
+    if (store.usable_max !== undefined) return store.usable_max;
+    const marks = store.marks ?? {};
+    const highest = Math.max(...[marks.max, marks.pv, marks.target, marks.eco].filter((v): v is number => v !== undefined), -Infinity);
+    return Number.isFinite(highest) && highest > floor ? highest : floor + 12;
+  }
+
+  private _mean(store: StoreConfig): number | undefined {
+    const top = this._num(store.top);
+    const bottom = this._num(store.bottom);
+    if (top === undefined) return undefined;
+    return bottom === undefined ? top : (top + bottom) / 2;
+  }
+
+  /** Litres of water carry 1.163 Wh per kelvin; above the floor that is what is left. */
+  private _usable(store: StoreConfig & { kind: StoreKind }, floor: number): number | undefined {
+    const mean = this._mean(store);
+    if (store.volume === undefined || mean === undefined) return undefined;
+    return Math.max(0, (store.volume * 1.163 * (mean - floor)) / 1000);
+  }
+
+  /** The measured fall, in kelvin per hour, or nothing when the recorder was quiet. */
+  private _fall(store: StoreConfig): number | undefined {
+    return slopePerHour(this._trend[store.top] ?? []);
+  }
+
+  private _spanWords(hours: number): string {
+    const coarse = coarseSpan(hours);
+    return [
+      coarse.hours !== undefined ? `${coarse.hours} ${this._t("unit.h")}` : "",
+      coarse.minutes ? `${coarse.minutes}${coarse.hours !== undefined ? "" : ` ${this._t("unit.min")}`}` : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  /** How long until this store drops to the temperature that makes it useless. */
+  private _lasts(store: StoreConfig & { kind: StoreKind }, floor: number): string | undefined {
+    const config = this._config as ResolvedConfig;
+    const mean = this._mean(store);
+    if (mean === undefined) return undefined;
+    const hours = hoursLeft(mean, floor, this._fall(store), config.forecast_min_slope);
+    if (hours === undefined) return undefined;
+    return this._t("flow.lasts", { span: this._spanWords(hours) });
+  }
+
+  /**
+   * When the heat pump will have to make hot water again: the store cools, and the Eco
+   * mark is where it gives in. A more tempting figure would be "enough for two showers",
+   * but how long anyone showers is not something the card can measure.
+   */
+  private _hotWaterDue(): string | undefined {
+    const config = this._config as ResolvedConfig;
+    const store = config.stores.find((st) => st.kind === "hot_water");
+    const eco = store?.marks?.eco;
+    if (!store || eco === undefined) return undefined;
+    if (this._mode().kind === "hot_water") return undefined;
+    const top = this._num(store.top);
+    if (top === undefined) return undefined;
+    if (top <= eco) return this._t("store.due");
+    const hours = hoursLeft(top, eco, this._fall(store), config.forecast_min_slope);
+    if (hours === undefined) return undefined;
+    return this._t("store.due_in", { span: this._spanWords(hours) });
+  }
+
+  private _circuitActive(circuit: ResolvedConfig["circuits"][number]): boolean {
+    const raw = stateOf(this.hass, circuit.state)?.state;
+    const pumpOn = circuit.pump ? this._isOn(circuit.pump) : undefined;
+    return pumpOn ?? circuitActive(raw, circuit.active);
+  }
+
+  /**
+   * Which circuits the buffer is carrying on its own. Everything it needs is already
+   * configured: a store marked as a buffer, a heat pump that is not heating, and a
+   * circuit that says it is taking heat. No extra sensor, no extra setting.
+   */
+  private _fromBuffer(): { store: ResolvedConfig["stores"][number]; circuits: number[] } | undefined {
+    const config = this._config as ResolvedConfig;
+    if (!config.flow.bypass) return undefined;
+    const store = config.stores.find((st) => st.kind === "buffer");
+    if (!store) return undefined;
+    if (this._mode().kind === "heating") return undefined;
+    const circuits: number[] = [];
+    config.circuits.forEach((circuit, index) => {
+      if (circuit.kind === "heating" && this._circuitActive(circuit)) circuits.push(index);
+    });
+    return circuits.length ? { store, circuits } : undefined;
   }
 
   // ─── helpers ───────────────────────────────────────────────
@@ -361,16 +513,35 @@ export class HeatOriginCard extends LitElement {
 
   private _chip() {
     const mode = this._mode();
-    // At rest the moment that matters is when the last run ended, not when a block turned into standby.
-    const last = isRunning(mode.kind) ? undefined : lastRun(this._days()?.at(-1));
-    const sinceAt = last && mode.since !== undefined && last.to <= mode.since ? last.to : mode.since;
-    const since =
-      sinceAt !== undefined && Date.now() - sinceAt < DAY
-        ? ` · ${this._t("flow.since", { time: clock(new Date(sinceAt), this._locale) })}`
-        : "";
-    return html`<span class="chip" style="--tone:${TONE[mode.kind]}" @click=${() => this._moreInfo(this._config?.entities.mode)}
-      ><i></i>${this._modeLabel(mode.kind, mode.raw)}${since}</span
-    >`;
+    const running = isRunning(mode.kind);
+    const carried = this._fromBuffer();
+    const chips: TemplateResult[] = [];
+
+    // A heat pump at rest has nothing to announce: the middle of the circle already
+    // says when it last ran and for how long. "Ready" is a word about nothing.
+    if (running || mode.kind === "blocked") {
+      const last = running ? undefined : lastRun(this._days()?.at(-1));
+      const sinceAt = last && mode.since !== undefined && last.to <= mode.since ? last.to : mode.since;
+      const since =
+        !carried && sinceAt !== undefined && Date.now() - sinceAt < DAY
+          ? ` · ${this._t("flow.since", { time: clock(new Date(sinceAt), this._locale) })}`
+          : "";
+      chips.push(html`<span class="chip ${running ? "live" : ""}" style="--tone:${TONE[mode.kind]}"
+        @click=${() => this._moreInfo(this._config?.entities.mode)}><i></i>${this._modeLabel(mode.kind, mode.raw)}${since}</span>`);
+    }
+
+    if (carried) {
+      const config = this._config as ResolvedConfig;
+      const names = carried.circuits.map((i) => config.circuits[i]?.name).filter(Boolean);
+      const what =
+        names.length === 1
+          ? this._t("flow.bypass_to", { to: String(names[0]) })
+          : this._t("flow.bypass_many", { n: String(names.length) });
+      chips.push(html`<span class="chip live" style="--tone:var(--ho-heating)"
+        @click=${() => this._moreInfo(carried.store.top)}><i></i>${what}</span>`);
+    }
+
+    return chips.length ? html`<span class="chips">${chips}</span>` : nothing;
   }
 
   private _renderHead() {
@@ -383,93 +554,188 @@ export class HeatOriginCard extends LitElement {
 
   // ─── flow ──────────────────────────────────────────────────
 
-  private _sinks(): Sink[] {
+  /** Every store and circuit as the drawing wants it: a symbol, two rows, a foot. */
+  private _boxes(): { stores: BoxModel[]; circuits: BoxModel[] } {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
     const mode = this._mode();
     const running = isRunning(mode.kind);
-    const details = config.flow.circuit_details;
-    const sinks: Sink[] = [];
+    const face = config.flow.circuit;
+    const carried = this._fromBuffer();
 
-    for (const store of config.stores) {
-      const top = this._temp(store.top);
-      const bottom = this._temp(store.bottom);
-      const fed = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
-      sinks.push({
+    const stores: BoxModel[] = config.stores.map((store) => {
+      const floor = this._floor(store);
+      const ceiling = this._ceiling(store, floor);
+      const span = ceiling - floor;
+      const at = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - floor) / span)) : 0);
+      const top = this._num(store.top);
+      const bottom = this._num(store.bottom) ?? top;
+      const charging = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
+      const draining = carried?.store === store;
+      const usable = this._usable(store, floor);
+      const marks = (["eco", "target", "pv", "max"] as const)
+        .map((key) => store.marks?.[key])
+        .filter((v): v is number => v !== undefined && v > floor && v < ceiling)
+        .map(at);
+      const target = store.marks?.target;
+
+      const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : this._t("flow.top");
+      const digits = (v: number) => `${formatTemp(v, locale)}°`;
+      return {
         name: store.name,
-        circulating: store.kind === "hot_water" && Boolean(store.circulation_pump) && this._isOn(store.circulation_pump),
-        value: `${top ?? "–"} °C`,
-        detail: details && fed && bottom !== undefined ? `${this._t("flow.bottom")} ${bottom} °C` : undefined,
-        active: fed,
-        fed,
+        icon: store.icon,
+        short: store.short,
         tone: STORE_TONE[store.kind],
-        entity: store.top
-      });
-    }
+        on: charging || draining,
+        label: word.toUpperCase(),
+        labelTone: charging || draining ? STORE_TONE[store.kind] : undefined,
+        value: top === undefined ? "–" : digits(top),
+        labelRight: usable === undefined ? undefined : this._t("flow.usable_unit"),
+        valueRight: usable === undefined ? undefined : this._one(usable),
+        level:
+          top === undefined
+            ? undefined
+            : {
+                top: at(top),
+                bottom: at(bottom ?? top),
+                marks,
+                scale: [digits(floor), digits(ceiling)] as [string, string],
+                mark: target !== undefined && target > floor && target < ceiling
+                  ? ([at(target), this._t("mark.target")] as [number, string])
+                  : undefined
+              },
+        hint: this._storeHint(store, floor, ceiling, usable)
+      };
+    });
 
-    for (const circuit of config.circuits) {
+    const circuits: BoxModel[] = config.circuits.map((circuit, index) => {
       const raw = stateOf(this.hass, circuit.state)?.state;
-      const pumpOn = circuit.pump ? this._isOn(circuit.pump) : undefined;
-      const active = pumpOn ?? circuitActive(raw, circuit.active);
-      const room = this._temp(circuit.room);
+      const active = this._circuitActive(circuit);
+      const room = this._num(circuit.room);
       const flow = this._num(circuit.flow ?? circuit.temperature);
       const ret = this._num(circuit.return);
-      const max = room !== undefined ? 9 : 16;
-      const word = circuit.state
-        ? shortWordLabel(raw, locale, max)
-        : pumpOn !== undefined
-          ? this._t(pumpOn ? "flow.running" : "kind.idle")
-          : undefined;
-
-      let value: string;
-      if (circuit.kind === "circulation") {
-        value = flow !== undefined ? `${formatTemp(flow, locale)} °C${active ? ` · ${this._t("flow.running")}` : ""}` : word ?? "–";
-      } else {
-        const flowText = flow !== undefined ? `${this._t("flow.vl")} ${formatTemp(flow, locale)} °C` : undefined;
-        value = active ? flowText ?? word ?? "–" : word ?? flowText ?? "–";
-      }
       const cooling = raw ? /cool|kühl|cc-/i.test(raw) : false;
-      const spread =
-        details && active && flow !== undefined && ret !== undefined
-          ? `${formatTemp(flow, locale)}/${formatTemp(ret, locale)} · Δ ${this._one(flow - ret)} K`
-          : undefined;
-      sinks.push({
+      const tone = circuit.kind === "circulation" ? TONE.hot_water : cooling ? TONE.cooling : TONE.heating;
+      const buffered = Boolean(carried?.circuits.includes(index));
+      const digits = (v: number | undefined) => (v === undefined ? "–" : `${formatTemp(v, locale)}°`);
+      const spread = active && flow !== undefined && ret !== undefined ? `Δ ${this._one(flow - ret)} K` : undefined;
+      const origin = buffered && config.flow.origin ? this._t("flow.from_buffer") : undefined;
+      const resting = circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.off");
+
+      // The room is what the circuit is for; flow and return are how it gets there.
+      if (face === "room" && room !== undefined) {
+        return {
+          name: circuit.name,
+          icon: circuit.icon,
+          short: circuit.short,
+          tone,
+          on: active,
+          label: (origin ?? (active ? this._t("flow.room") : resting)).toUpperCase(),
+          labelTone: origin ? tone : undefined,
+          value: digits(room),
+          pair: {
+            up: digits(flow),
+            down: active ? digits(ret) : undefined,
+            note: buffered && !config.flow.origin ? this._t("flow.bypass") : undefined,
+            spread
+          },
+          hint: circuit.name
+        };
+      }
+
+      return {
         name: circuit.name,
-        value,
-        detail: spread,
-        right: room !== undefined ? `${room}°` : undefined,
-        active,
-        fed: running && active && circuit.kind === "heating",
-        tone: circuit.kind === "circulation" ? TONE.hot_water : cooling ? TONE.cooling : TONE.heating,
-        entity: circuit.pump ?? circuit.state ?? circuit.flow ?? circuit.temperature
-      });
-    }
-    return sinks;
+        icon: circuit.icon,
+        short: circuit.short,
+        tone,
+        on: active,
+        label: (active ? this._t("flow.flow_label") : resting).toUpperCase(),
+        value: digits(flow),
+        labelRight: room === undefined ? undefined : this._t("flow.room"),
+        valueRight: room === undefined ? undefined : digits(room),
+        sub: active && ret !== undefined ? `${this._t("flow.rl")} ${formatTemp(ret, locale)}${spread ? ` · ${spread}` : ""}` : undefined,
+        hint: circuit.name
+      };
+    });
+
+    return { stores, circuits };
   }
 
+  /** What the box says when the pointer rests on it: the sums behind its two figures. */
+  private _storeHint(store: StoreConfig & { kind: StoreKind }, floor: number, ceiling: number, usable: number | undefined): string {
+    const locale = this._locale;
+    const parts = [store.name];
+    if (usable !== undefined) parts.push(`${this._one(usable)} kWh ${this._t("stores.above", { t: formatTemp(floor, locale) })}`);
+    parts.push(`${formatTemp(floor, locale)}–${formatTemp(ceiling, locale)} °C`);
+    // Circulation draws from this store, so it is told here rather than given a box.
+    if (store.circulation_pump) {
+      const on = this._isOn(store.circulation_pump);
+      parts.push(`${this._t("stores.circulation")} ${this._t(on ? "stores.circulation_on" : "stores.circulation_off")}`);
+    }
+    return parts.join(" · ");
+  }
+
+  /**
+   * The line under the drawing. What drives the heat pump used to stand under the
+   * circle, but at 368 px that line ran into the right-hand boxes; across the full
+   * width it fits with a symbol beside it, and the ring shows the split anyway.
+   */
   private _flowFoot(running: boolean): TemplateResult[] {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
     const foot: TemplateResult[] = [];
+    if (config.flow.foot === "none") return foot;
+
+    const live = this._live();
+    const heat = running ? live.heat ?? 0 : 0;
+    const electric = running ? live.electric ?? 0 : 0;
+    const air = Math.max(0, heat - electric);
+    const shares = running ? this._shares(live.electric) : undefined;
+    const dominant = this._dominant(shares);
+    const outdoor = this._temp(config.entities.outdoor);
+    const ambient = this._t("ambient." + config.source);
+
+    if (running && config.entities.electric_power) {
+      foot.push(html`<span>${mark("bolt", dominant ? SOURCE_TONE[dominant] : "var(--ho-power)")}
+        <span><b>${formatPower(electric, locale)} kW</b> ${this._sourceLabel(shares)}</span></span>`);
+    }
+    if (running && config.entities.heat_power && config.entities.electric_power) {
+      foot.push(html`<span>${mark("air", "var(--ho-air)")}
+        <span><b>${formatPower(air, locale)} kW</b> ${ambient}${outdoor !== undefined ? " " + outdoor + " °C" : ""}</span></span>`);
+    }
+    if (!running && outdoor !== undefined) {
+      foot.push(html`<span>${mark("air", PALETTE.muted)}<span><b>${outdoor} °C</b> ${this._t("flow.outside")}</span></span>`);
+    }
+
+    // The hot water store cools too, and the Eco mark is where the heat pump gives in.
+    const due = this._hotWaterDue();
+    if (due) foot.push(html`<span style="color:${TONE.hot_water}">${mark("drop", TONE.hot_water)}<b>${due}</b></span>`);
+
+    if (config.flow.foot === "drive") return foot;
+
     if (running && config.flow.spread) {
       const flowT = this._num(config.entities.flow);
       const retT = this._num(config.entities.return);
       const volume = this._num(config.entities.volume_flow);
-      if (flowT !== undefined) foot.push(html`<span>${this._t("flow.flow")} <b>${formatTemp(flowT, locale)} °C</b></span>`);
-      if (retT !== undefined) foot.push(html`<span>${this._t("flow.return")} <b>${formatTemp(retT, locale)} °C</b></span>`);
-      if (flowT !== undefined && retT !== undefined) foot.push(html`<span>${this._t("flow.spread")} <b>${this._one(flowT - retT)} K</b></span>`);
-      if (volume !== undefined)
+      if (flowT !== undefined && retT !== undefined) {
+        foot.push(html`<span>${this._t("flow.wp")} <b>${formatTemp(flowT, locale)} → ${formatTemp(retT, locale)} °C</b> · Δ <b>${this._one(flowT - retT)} K</b></span>`);
+      } else if (flowT !== undefined) {
+        foot.push(html`<span>${this._t("flow.flow")} <b>${formatTemp(flowT, locale)} °C</b></span>`);
+      }
+      if (volume !== undefined) {
         foot.push(html`<span><b>${formatNumber(volume, locale, 0)}</b> ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}</span>`);
+      }
     }
     if (!running) {
       const today = this._days()?.at(-1);
       if (today) {
         foot.push(html`<span>${this._t("flow.today_starts")} <b>${this._t("flow.starts_n", { n: String(today.starts) })}</b></span>`);
         const last = lastRun(today);
-        if (last)
+        if (last) {
           foot.push(
-            html`<span>${this._t("flow.last")} ${this._t(`kind.${last.kind}`)} <b>${clock(new Date(last.from), locale)}–${clock(new Date(last.to), locale)}</b></span>`
+            html`<span>${this._t("flow.last")} ${this._t("kind." + last.kind)} <b>${clock(new Date(last.from), locale)}–${clock(new Date(last.to), locale)}</b></span>`
           );
+        }
       }
     }
     for (const extra of config.flow.extras) {
@@ -479,7 +745,7 @@ export class HeatOriginCard extends LitElement {
       const n = numberOf(entity);
       const value = n === undefined ? entity.state : formatNumber(n, locale, Math.abs(n) < 100 ? 1 : 0);
       const name = extra.name ?? String(entity.attributes.friendly_name ?? extra.entity);
-      foot.push(html`<span>${name} <b>${value}${unitOf(entity) ? ` ${unitOf(entity)}` : ""}</b></span>`);
+      foot.push(html`<span>${name} <b>${value}${unitOf(entity) ? " " + unitOf(entity) : ""}</b></span>`);
     }
     return foot;
   }
@@ -515,240 +781,179 @@ export class HeatOriginCard extends LitElement {
 
   private _renderFlow() {
     const config = this._config as ResolvedConfig;
-    const locale = this._locale;
     const mode = this._mode();
     const live = this._live();
     const running = isRunning(mode.kind);
     const heat = running ? live.heat ?? 0 : 0;
     const electric = running ? live.electric ?? 0 : 0;
-    const air = Math.max(0, heat - electric);
     const shares = running ? this._shares(live.electric) : undefined;
-    const dominant = this._dominant(shares);
-    const powerTone = running ? (dominant ? SOURCE_TONE[dominant] : "var(--ho-power)") : "var(--ho-muted)";
-    const sinks = this._sinks();
-    const outdoor = this._temp(config.entities.outdoor);
-    const width = (kw: number) => Math.min(9, Math.max(2.5, 2 + kw * 1.1));
     const hasBoth = Boolean(config.entities.heat_power && config.entities.electric_power);
-    const last = running ? undefined : lastRun(this._days()?.at(-1));
-    const airTone = running ? "var(--ho-air)" : "var(--ho-muted)";
-    const lineStyle = running ? "" : "3 5";
+    const { stores, circuits } = this._boxes();
+    const carried = this._fromBuffer();
 
-    const centre = (cx: number, cy: number, r: number, big: number) =>
-      running
-        ? svg`
-          <text x=${cx} y=${cy} text-anchor="middle" font-size=${big} font-weight="700" fill="var(--ho-ink)">${formatNumber(heat, locale, 1)}</text>
-          <text x=${cx} y=${cy + 13} text-anchor="middle" font-size="10" fill="var(--ho-muted)" class="mono">${this._t("flow.heat")}</text>
-          ${live.cop !== undefined
-            ? svg`<text x=${cx} y=${cy + r - 11} text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--ho-ink)" class="mono">COP ${formatNumber(live.cop, locale, 1)}</text>`
-            : nothing}`
-        : last
-          ? svg`
-            <text x=${cx} y=${cy - 14} text-anchor="middle" font-size="10" fill="var(--ho-muted)" class="mono">${this._t("flow.last")}</text>
-            <text x=${cx} y=${cy + 5} text-anchor="middle" font-size=${big - 7} font-weight="700" fill="var(--ho-ink)">${this._spanText((last.to - last.from) / 60000)}</text>
-            <text x=${cx} y=${cy + 20} text-anchor="middle" font-size="10" font-weight="600" fill=${TONE[last.kind]}>${this._t(`kind.${last.kind}`)}</text>`
-          : svg`<text x=${cx} y=${cy + 4} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ho-muted)">${this._modeLabel(mode.kind, mode.raw)}</text>`;
+    const days = this._days();
+    const showClock = config.flow.ring !== "shares";
+    const rRing = showClock ? R_PUMP + 7 : R_PUMP;
+    const reach = rRing + 4;
+    const outer = showClock ? rRing + 26 : rRing + 2;
 
-    const powerGlyph = (x: number, y: number) =>
-      svg`<path d="M${x + 2} ${y - 10} L${x - 6} ${y + 2} H${x} L${x - 2} ${y + 10} L${x + 6} ${y - 2} H${x} Z" fill=${powerTone}/>`;
-    const airGlyph = (x: number, y: number) =>
-      svg`<path d="M${x - 10} ${y - 5} H${x + 5} a3.5 3.5 0 1 0 -3.5 -3.5 M${x - 10} ${y} H${x + 9} M${x - 10} ${y + 5} H${x + 3} a3.5 3.5 0 1 1 -3.5 3.5"
-        fill="none" stroke=${airTone} stroke-width="2" stroke-linecap="round"/>`;
+    const rows = Math.max(stores.length, circuits.length);
+    const stack = rows ? rows * BOX_H + (rows - 1) * BOX_GAP : 0;
+    const H = Math.max(stack, 2 * outer + 4) + 8;
+    const y0 = (H - stack) / 2;
+    // The blocks keep the true middle; only the heat pump rides above it.
+    const cy = Math.max(outer + 2, Math.round(H / 2) - PUMP_LIFT);
+    const cx = DRAW_W / 2;
+    const leftEdge = 1 + BOX_W;
+    const rightEdge = DRAW_W - BOX_W - 1;
+    const midOf = (i: number) => y0 + i * (BOX_H + BOX_GAP) + BOX_H / 2;
 
-    if (this._narrow) {
-      const cx = 124;
-      const cy = 46;
-      const r = 38;
-      return html`
-        <div class="section">
-          <svg viewBox="0 0 248 112" role="img" aria-label="${this._modeLabel(mode.kind, mode.raw)}">
-            ${config.entities.electric_power
-              ? svg`<path d="M42 ${cy} H${cx - r}" stroke=${running ? powerTone : "var(--ho-track)"} stroke-width=${running ? width(electric) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
-                <g class="clickable" @click=${() => this._moreInfo(config.entities.electric_power)}>
-                  <circle cx="24" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? powerTone : "var(--ho-hairline)"} stroke-width="2"/>
-                  ${powerGlyph(24, cy)}
-                  <text x="24" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(electric, locale) : "–"}</text>
-                  <text x="24" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._sourceLabel(shares) : this._t("flow.power")}</text>
-                </g>`
-              : nothing}
-            ${hasBoth
-              ? svg`<path d="M${cx + r} ${cy} H206" stroke=${running ? "var(--ho-air)" : "var(--ho-track)"} stroke-width=${running ? width(air) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
-                <g class="clickable" @click=${() => this._moreInfo(config.entities.outdoor ?? config.entities.heat_power)}>
-                  <circle cx="224" cy=${cy} r="17" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
-                  ${airGlyph(224, cy)}
-                  <text x="224" y=${cy + 32} text-anchor="middle" font-size="11" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? formatPower(air, locale) : outdoor !== undefined ? `${outdoor}°` : "–"}</text>
-                  <text x="224" y=${cy + 45} text-anchor="middle" font-size="10" fill="var(--ho-muted)">${running ? this._t(`ambient.${config.source}`) : this._t("flow.outside")}</text>
-                </g>`
-              : nothing}
-            <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
-              <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
-              ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
-              ${centre(cx, cy, r, 24)}
-            </g>
-          </svg>
-          ${sinks.length
-            ? html`<div class="sinks">
-                ${sinks.map(
-                  (s) => html`<div class="sink ${s.active ? "active" : ""}" style="--tone:${s.tone}" @click=${() => this._moreInfo(s.entity)}>
-                    <span>${s.name}</span><span class="v">${s.value}${s.right ? ` · ${s.right}` : ""}${s.circulating ? ` · ${this._t("stores.circulation")}` : ""}</span>
-                  </div>`
-                )}
-              </div>`
-            : nothing}
-          ${this._footBlock(running)}
-        </div>
-      `;
+    if (this._narrow) return this._renderFlowList(stores.concat(circuits), running);
+
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low" };
+    const parts: unknown[] = [];
+
+    stores.forEach((model, i) => {
+      const fed = model.on && model.label === this._t("flow.charging").toUpperCase();
+      parts.push(connector(cx - reach, cy, leftEdge, midOf(i), -1, {
+        tone: model.tone, fed, dashed: !running, dim: !model.on && !fed, track: PALETTE.track, surface: PALETTE.surface
+      }));
+    });
+
+    const buffered: number[] = [];
+    circuits.forEach((model, i) => {
+      if (carried?.circuits.includes(i)) { buffered.push(midOf(i)); return; }
+      const fed = running && mode.kind === "heating" && model.on;
+      parts.push(connector(cx + reach, cy, rightEdge, midOf(i), 1, {
+        tone: model.tone, fed, dashed: !running, dim: !model.on && !fed, track: PALETTE.track, surface: PALETTE.surface
+      }));
+    });
+
+    if (carried && buffered.length) {
+      const bufferIndex = config.stores.indexOf(carried.store);
+      const floor = this._floor(carried.store);
+      const label = config.flow.range ? this._lasts(carried.store, floor) : undefined;
+      parts.push(bypass(leftEdge, midOf(bufferIndex), rightEdge, buffered, {
+        cx, cy, ring: rRing, tone: TONE.heating, surface: PALETTE.surface,
+        label, hint: this._t("forecast.how")
+      }));
     }
 
-    const rowH = sinks.some((s) => s.detail) ? 46 : 36;
-    const gap = 8;
-    const stackOf = (n: number) => (n ? n * rowH + (n - 1) * gap : 0);
+    let uid = 0;
+    stores.forEach((model, i) => {
+      uid += 1;
+      parts.push(box(model, 1, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(config.stores[i]?.top)));
+    });
+    circuits.forEach((model, i) => {
+      uid += 1;
+      const circuit = config.circuits[i];
+      const entity = circuit?.pump ?? circuit?.state ?? circuit?.flow ?? circuit?.temperature;
+      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
+    });
 
-    // A box for one taker; the line leaves the ring towards the box's near edge.
-    const sinkNode = (sink: Sink, x: number, w: number, y: number, from: [number, number], side: 1 | -1) => {
-      const mid = y + rowH / 2;
-      const edge = side === 1 ? x : x + w;
-      const bend = Math.max(16, Math.abs(edge - from[0]) * 0.45) * side;
-      const path = `M${from[0]} ${from[1]} C ${from[0] + bend} ${from[1]}, ${edge - bend} ${mid}, ${edge} ${mid}`;
-      const maxChars = Math.floor((w - 16) / (11.5 * 0.58));
-      const name = sink.name.length > maxChars ? `${sink.name.slice(0, maxChars - 1)}…` : sink.name;
-      return svg`
-        ${sink.fed
-          ? svg`<path d=${path} fill="none" stroke=${sink.tone} stroke-width=${width(heat)} stroke-linecap="round"/>
-               <path d=${path} fill="none" stroke="#fff" stroke-width="3" opacity="0.85" class="flow-dash"/>`
-          : svg`<path d=${path} fill="none" stroke=${sink.active ? sink.tone : "var(--ho-track)"} stroke-width="2" opacity=${sink.active ? 0.6 : 1}
-              stroke-dasharray=${running ? "" : "3 5"}/>`}
-        <g class="clickable" @click=${() => this._moreInfo(sink.entity)}>
-          ${name !== sink.name ? svg`<title>${sink.name}</title>` : nothing}
-          <rect x=${x} y=${y} width=${w} height=${rowH} rx="8"
-            fill=${sink.active ? `color-mix(in srgb, ${sink.tone} 16%, var(--ho-surface))` : "var(--ho-surface)"}
-            stroke=${sink.active ? sink.tone : "var(--ho-hairline)"} stroke-width="1.5"/>
-          <text x=${x + 9} y=${y + 15} font-size="11.5" font-weight="600" fill="var(--ho-ink)">${name}</text>
-          <text x=${x + 9} y=${y + 29} font-size="10.5" fill=${sink.active ? "var(--ho-ink)" : "var(--ho-muted)"} class="mono">${sink.value}</text>
-          ${sink.right ? svg`<text x=${x + w - 7} y=${y + 29} text-anchor="end" font-size="10.5" fill="var(--ho-muted)" class="mono">${sink.right}</text>` : nothing}
-          ${sink.circulating
-            ? svg`<g transform="translate(${x + w - 16} ${y + 25})" aria-label=${this._t("stores.circulation")}>
-                <title>${this._t("stores.circulation")} ${this._t("stores.circulation_on")}</title>
-                <path d="M-5.5 0 A5.5 5.5 0 1 1 0 5.5" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round"/>
-                <path d="M-3.2 5.5 L0 5.5 L0 2.3" fill="none" stroke="var(--ho-hot-water)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </g>`
-            : nothing}
-          ${sink.detail ? svg`<text x=${x + 9} y=${y + 41} font-size="10" fill="var(--ho-muted)" class="mono">${sink.detail}</text>` : nothing}
-        </g>
-      `;
-    };
+    if (showClock) parts.push(this._dial(cx, cy, rRing, days));
 
-    if (config.flow.layout === "split" && sinks.length >= 2) {
-      // Stores on the left, circuits on the right: heat leaves the heat pump both ways.
-      const stores = sinks.slice(0, config.stores.length);
-      const circuits = sinks.slice(config.stores.length);
-      const half = Math.ceil(sinks.length / 2);
-      const [left, right] = stores.length && circuits.length ? [stores, circuits] : [sinks.slice(0, half), sinks.slice(half)];
-      const r = 36;
-      const bw = 120;
-      const cx = W / 2;
-
-      // Electricity above the heat pump, ambient heat below, each as one short line.
-      const top =
-        running && config.entities.electric_power
-          ? { glyph: powerGlyph(0, 0), strong: `${formatPower(electric, locale)} kW`, weak: ` · ${this._sourceLabel(shares)}`, entity: config.entities.electric_power }
-          : undefined;
-      const bottom =
-        running && hasBoth
-          ? {
-              glyph: airGlyph(0, 0),
-              strong: `${formatPower(air, locale)} kW`,
-              weak: outdoor !== undefined ? ` · ${outdoor} °C` : ` · ${this._t(`ambient.${config.source}`)}`,
-              entity: config.entities.outdoor ?? config.entities.heat_power
-            }
-          : outdoor !== undefined
-            ? { glyph: airGlyph(0, 0), strong: `${outdoor} °C`, weak: ` ${this._t("flow.outside")}`, entity: config.entities.outdoor }
-            : undefined;
-
-      const reach = r + (top || bottom ? 22 : 6);
-      const H = Math.max(stackOf(left.length), stackOf(right.length), 2 * reach) + 8;
-      const cy = H / 2;
-      const label = (line: { glyph: TemplateResult; strong: string; weak: string; entity?: string } | undefined, y: number) => {
-        if (!line) return nothing;
-        const size = 11;
-        const textW = (line.strong.length + line.weak.length) * size * 0.56;
-        const x0 = cx - (textW + 17) / 2;
-        return svg`<g class="clickable source-line" @click=${() => this._moreInfo(line.entity)}>
-          <g transform="translate(${x0 + 6} ${y - 4}) scale(0.6)">${line.glyph}</g>
-          <text x=${x0 + 17} y=${y} font-size=${size} class="mono"><tspan font-weight="600" fill="var(--ho-ink)">${line.strong}</tspan><tspan fill="var(--ho-muted)">${line.weak}</tspan></text>
-        </g>`;
-      };
-      const leftY0 = cy - stackOf(left.length) / 2;
-      const rightY0 = cy - stackOf(right.length) / 2;
-
-      return html`
-        <div class="section">
-          <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${this._modeLabel(mode.kind, mode.raw)}">
-            ${left.map((s, i) => sinkNode(s, 1, bw, leftY0 + i * (rowH + gap), [cx - r, cy], -1))}
-            ${right.map((s, i) => sinkNode(s, W - bw - 1, bw, rightY0 + i * (rowH + gap), [cx + r, cy], 1))}
-            <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
-              <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
-              ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
-              ${centre(cx, cy, r, 23)}
-            </g>
-            ${label(top, cy - r - 9)}
-            ${label(bottom, cy + r + 17)}
-          </svg>
-          ${this._footBlock(running)}
-        </div>
-      `;
-    }
-
-    const stack = stackOf(sinks.length);
-    const H = Math.max(200, stack + 8);
-    const cy = H / 2;
-    const cx = 150;
-    const r = 38;
-    const sinkX = 238;
-    const sinkW = W - sinkX;
-    const y0 = cy - stack / 2;
-    const spreadY = Math.min(62, Math.max(50, H * 0.26));
-    const powerY = cy - spreadY;
-    const airY = cy + spreadY;
-
-    const inputs: TemplateResult[] = [];
-    if (config.entities.electric_power) {
-      inputs.push(svg`
-        <path d="M54 ${powerY} C 94 ${powerY}, 92 ${cy - 10}, ${cx - r + 2} ${cy - 10}" fill="none"
-          stroke=${running ? powerTone : "var(--ho-track)"} stroke-width=${running ? width(electric) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
-        <g class="clickable" @click=${() => this._moreInfo(config.entities.electric_power)}>
-          <circle cx="36" cy=${powerY} r="18" fill="var(--ho-surface)" stroke=${running ? powerTone : "var(--ho-hairline)"} stroke-width="2"/>
-          ${powerGlyph(36, powerY)}
-          ${running
-            ? svg`<text x="36" y=${powerY + 33} text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ho-ink)" class="mono">${formatPower(electric, locale)} kW</text>`
-            : nothing}
-          <text x="36" y=${powerY + (running ? 46 : 33)} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t("flow.power")} · ${this._sourceLabel(shares)}` : this._t("flow.power")}</text>
-        </g>`);
-    }
-    if (hasBoth) {
-      inputs.push(svg`
-        <path d="M54 ${airY} C 94 ${airY}, 92 ${cy + 10}, ${cx - r + 2} ${cy + 10}" fill="none"
-          stroke=${running ? "var(--ho-air)" : "var(--ho-track)"} stroke-width=${running ? width(air) : 2} stroke-dasharray=${lineStyle} stroke-linecap="round"/>
-        <g class="clickable" @click=${() => this._moreInfo(config.entities.outdoor ?? config.entities.heat_power)}>
-          <circle cx="36" cy=${airY} r="18" fill="var(--ho-surface)" stroke=${running ? "var(--ho-air)" : "var(--ho-hairline)"} stroke-width="2"/>
-          ${airGlyph(36, airY)}
-          <text x="36" y=${airY + 33} text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ho-ink)" class="mono">${running ? `${formatPower(air, locale)} kW` : outdoor !== undefined ? `${outdoor} °C` : ""}</text>
-          <text x="36" y=${airY + 46} text-anchor="middle" font-size="10.5" fill="var(--ho-muted)">${running ? `${this._t(`ambient.${config.source}`)}${outdoor !== undefined ? ` ${outdoor} °C` : ""}` : this._t("flow.outside")}</text>
-        </g>`);
-    }
-
-    const sinkNodes = sinks.map((sink, i) => sinkNode(sink, sinkX, sinkW - 1, y0 + i * (rowH + gap), [cx + r, cy], 1));
+    parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
+    if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_PUMP, heat, electric, shares));
+    parts.push(this._centre(cx, cy, heat, electric, live.cop, running, mode));
 
     return html`
       <div class="section">
-        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${this._modeLabel(mode.kind, mode.raw)}">
-          ${inputs}
-          ${sinkNodes}
-          <g class="clickable" @click=${() => this._moreInfo(config.entities.heat_power)}>
-            <circle cx=${cx} cy=${cy} r=${r} fill="var(--ho-surface)" stroke="var(--ho-hairline)" stroke-width="2"/>
-            ${running && hasBoth ? this._ring(cx, cy, r, heat, electric, shares) : nothing}
-            ${centre(cx, cy, r, 25)}
-          </g>
-        </svg>
+        <svg viewBox="0 0 ${DRAW_W} ${H}" role="img" aria-label=${this._modeLabel(mode.kind, mode.raw)}>${parts}</svg>
+        ${this._footBlock(running)}
+      </div>
+    `;
+  }
+
+  /** The dial's day: today's stretches in the colour of what the heat pump was doing. */
+  private _dial(cx: number, cy: number, r: number, days: DayTimeline[] | undefined) {
+    const config = this._config as ResolvedConfig;
+    const today = days?.[days.length - 1];
+    const hourOf = (t: number) => (t - (today?.start ?? 0)) / 3600000;
+    const segments: DialSegment[] = (today?.segments ?? []).map((seg) => ({
+      from: hourOf(seg.from),
+      // A minute of running would be invisible; every stretch gets a mark you can see.
+      to: Math.max(hourOf(seg.to), hourOf(seg.from) + 0.12),
+      tone: TONE[seg.kind]
+    }));
+    const now = new Date();
+    return dial(cx, cy, r, {
+      segments,
+      now: now.getHours() + now.getMinutes() / 60,
+      sun: config.flow.sun ? this._daylight() : undefined,
+      tone: PALETTE
+    });
+  }
+
+  /** Sunrise and sunset in hours, from Home Assistant's own sun entity. */
+  private _daylight(): [number, number] | undefined {
+    const sun = stateOf(this.hass, "sun.sun");
+    const rise = sun?.attributes?.next_rising;
+    const set = sun?.attributes?.next_setting;
+    const hour = (value: unknown) => {
+      const at = Date.parse(String(value ?? ""));
+      if (!Number.isFinite(at)) return undefined;
+      const date = new Date(at);
+      return date.getHours() + date.getMinutes() / 60;
+    };
+    const up = hour(rise);
+    const down = hour(set);
+    if (up === undefined || down === undefined || up >= down) return undefined;
+    return [up, down];
+  }
+
+  /** What the circle reads. Electricity is as interesting as heat on some days. */
+  private _centre(cx: number, cy: number, heat: number, electric: number, cop: number | undefined, running: boolean, mode: ReturnType<HeatOriginCard["_mode"]>) {
+    const config = this._config as ResolvedConfig;
+    const locale = this._locale;
+    if (!running) {
+      const last = lastRun(this._days()?.at(-1));
+      if (!last) {
+        return svg`<text x=${cx} y=${cy + 4} text-anchor="middle" font-size="12" font-weight="600"
+          fill=${PALETTE.muted}>${this._modeLabel(mode.kind, mode.raw)}</text>`;
+      }
+      const span = formatSpan((last.to - last.from) / 60000);
+      const short = span.hours !== undefined
+        ? `${span.hours}:${String(span.minutes ?? 0).padStart(2, "0")} ${this._t("unit.h")}`
+        : `${span.minutes ?? 0} ${this._t("unit.min")}`;
+      const mark = last.kind === "hot_water" ? "water" : last.kind === "heating" ? "flame" : undefined;
+      return svg`
+        <text x=${cx} y=${cy - 12} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.08em"
+          fill=${PALETTE.muted}>${this._t("flow.last").toUpperCase()}</text>
+        <text x=${cx} y=${cy + 6} text-anchor="middle" font-size=${TYPE.figure} font-weight="700" fill=${PALETTE.ink}>${short}</text>
+        ${mark ? iconMark(mark, cx, cy + 11, TONE[last.kind]) : nothing}`;
+    }
+
+    const centre = config.flow.centre;
+    const big = centre === "power" ? electric : heat;
+    const unit = centre === "power" ? this._t("flow.power") : this._t("flow.heat");
+    const third = centre === "both"
+      ? `${formatNumber(electric, locale, electric < 10 ? 1 : 0)} kW`
+      : cop === undefined
+        ? undefined
+        : `COP ${formatNumber(cop, locale, 1)}`;
+    const thirdTone = centre === "both" ? "var(--ho-power)" : PALETTE.ink;
+    return svg`
+      <text x=${cx} y=${cy - 4} text-anchor="middle" font-size=${TYPE.hero} font-weight="700"
+        fill=${PALETTE.ink}>${formatNumber(big, locale, big < 10 ? 1 : 0)}</text>
+      <text x=${cx} y=${cy + 7} text-anchor="middle" font-size=${TYPE.micro} letter-spacing="0.06em" fill=${PALETTE.muted}>${unit}</text>
+      ${third
+        ? svg`<text x=${cx} y=${cy + 20} text-anchor="middle" font-size=${TYPE.small} font-weight="600" fill=${thirdTone}>${third}</text>`
+        : nothing}`;
+  }
+
+  /** In a column too narrow for the drawing, the takers become a list. */
+  private _renderFlowList(models: BoxModel[], running: boolean) {
+    return html`
+      <div class="section">
+        <div class="sinks">
+          ${models.map(
+            (m) => html`<div class="sink ${m.on ? "active" : ""}" style="--tone:${m.tone}" title=${m.hint ?? m.name}>
+              <span>${m.name}</span>
+              <span class="v">${[m.value, m.valueRight, m.pair?.up].filter(Boolean).join(" · ")}</span>
+            </div>`
+          )}
+        </div>
         ${this._footBlock(running)}
       </div>
     `;

@@ -37,7 +37,7 @@ export const cardStyles = css`
     padding: 14px 14px 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     overflow: hidden;
   }
 
@@ -50,7 +50,16 @@ export const cardStyles = css`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+    min-width: 0;
   }
 
   .title {
@@ -74,11 +83,36 @@ export const cardStyles = css`
     cursor: pointer;
   }
 
+  .chip {
+    border: 1px solid color-mix(in srgb, var(--tone, var(--ho-muted)) 45%, transparent);
+  }
+
   .chip i {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--tone, var(--ho-muted));
+    flex: 0 0 7px;
+    position: relative;
+  }
+
+  /* While something runs the dot breathes, so a still card still reads as alive. */
+  .chip.live i::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--tone, var(--ho-muted));
+    animation: breathe 2.2s ease-out infinite;
+  }
+
+  @keyframes breathe {
+    0% { transform: scale(0.6); opacity: 0.9; }
+    70%, 100% { transform: scale(1.5); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chip.live i::after { animation: none; }
   }
 
   .section {
@@ -156,11 +190,25 @@ export const cardStyles = css`
   .foot {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 4px 14px;
     font-family: var(--ho-mono);
     font-size: 11.5px;
     color: var(--ho-muted);
     font-variant-numeric: tabular-nums;
+  }
+
+  .foot > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .foot svg {
+    display: block;
+    width: 11px;
+    height: 11px;
+    flex: 0 0 11px;
   }
 
   .foot b {

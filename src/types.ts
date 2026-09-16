@@ -1,3 +1,5 @@
+import type { IconName } from "./icons";
+
 export interface HassEntity {
   entity_id: string;
   state: string;
@@ -20,6 +22,20 @@ export type SectionName = "flow" | "day" | "stores";
 export type CardShape = "standard" | "compact";
 export type StoreKind = "hot_water" | "buffer";
 export type CircuitKind = "heating" | "circulation";
+/** How much a box is asked to say. One dial instead of five switches. */
+export type DetailLevel = "low" | "normal" | "high";
+/** What a box writes beside its symbol. */
+export type LabelStyle = "short" | "icon" | "name";
+/** Which face a heating circuit shows. */
+export type CircuitFace = "room" | "flow";
+/** Where a store's level is drawn. */
+export type GaugeStyle = "bar" | "box";
+/** What rings the heat pump. */
+export type RingStyle = "both" | "clock" | "shares";
+/** What the middle of the heat pump reads. */
+export type CentreValue = "heat" | "power" | "both";
+/** How much of the foot line is kept. */
+export type FootStyle = "full" | "drive" | "none";
 /** Where the ambient heat comes from. */
 export type HeatSource = "air" | "ground" | "water";
 /** Where the electricity comes from right now. */
@@ -85,6 +101,10 @@ export interface CircuitConfig {
   room?: string;
   /** Words of `state` that mean the circuit is taking heat; sensible defaults apply. */
   active?: string[];
+  /** The symbol, guessed from the name when left out. */
+  icon?: string;
+  /** The mark under the symbol — the storey, guessed from the name when left out. */
+  short?: string;
 }
 
 export interface StoreMarks {
@@ -107,8 +127,13 @@ export interface StoreConfig {
   marks?: StoreMarks;
   /** Litres; with it the card shows the usable heat in kWh. */
   volume?: number;
-  /** The lowest useful temperature: 40 °C for a shower, 30 °C for underfloor heating. */
+  /** The lowest useful temperature: 40 °C for a shower, 30 °C for underfloor heating.
+   *  A buffer without one measures against the flow of its warmest running circuit. */
   usable_min?: number;
+  /** The temperature the level bar calls full; the highest mark, else minimum + 12 K. */
+  usable_max?: number;
+  icon?: string;
+  short?: string;
 }
 
 export interface ExtraFigure {
@@ -130,6 +155,32 @@ export interface FlowOptions {
   circuit_details?: boolean;
   /** Any further figures worth a glance, e.g. hot gas or compressor speed. */
   extras?: ExtraFigure[];
+  /**
+   * How much each box says. One dial that sets `labels`, `circuit`, `foot` and the
+   * store's scale together, because those choices belong together: whoever wants few
+   * figures wants few of them everywhere. The single settings below override it.
+   */
+  detail?: DetailLevel;
+  /** Symbol with the storey under it, symbol alone, or the name as before. */
+  labels?: LabelStyle;
+  /** The circuit's face: the room with flow and return beside it, or the flow itself. */
+  circuit?: CircuitFace;
+  /** The store's level as a bar in the box's foot, or as the box's own filling. */
+  gauge?: GaugeStyle;
+  /** Name the buffer in the circuit's box as well; the drawn line says it already. */
+  origin?: boolean;
+  /** Draw the line from a discharging buffer to the circuits it is carrying. */
+  bypass?: boolean;
+  /** How long the buffer still carries the circuits, on the line that carries them. */
+  range?: boolean;
+  /** What rings the heat pump: the day's dial, the shares of the heat, or both. */
+  ring?: RingStyle;
+  /** The hours the sun was up, as an arc outside the dial. */
+  sun?: boolean;
+  /** What the middle of the circle reads while the heat pump runs. */
+  centre?: CentreValue;
+  /** How much of the line under the drawing is kept. */
+  foot?: FootStyle;
 }
 
 export interface DayOptions {
@@ -164,6 +215,8 @@ export interface HeatOriginCardConfig {
   battery_invert?: boolean;
   /** Figures in the dashboard's own face (default) or in monospace. */
   font?: "system" | "mono";
+  /** Kelvin per hour; below this measured fall no remaining time is shown. */
+  forecast_min_slope?: number;
 }
 
 export interface ResolvedConfig {
@@ -173,9 +226,11 @@ export interface ResolvedConfig {
   sections: Required<Omit<SectionToggles, "order">> & { order: SectionName[] };
   entities: HeatOriginEntities;
   modes: Required<ModeWords>;
-  circuits: Array<CircuitConfig & { kind: CircuitKind }>;
-  stores: Array<StoreConfig & { kind: StoreKind }>;
+  circuits: Array<CircuitConfig & { kind: CircuitKind; icon: IconName; short: string }>;
+  stores: Array<StoreConfig & { kind: StoreKind; icon: IconName; short: string }>;
   flow: Required<FlowOptions>;
+  /** Below this measured fall per hour the card says nothing about how long a store lasts. */
+  forecast_min_slope: number;
   day: Required<DayOptions>;
   source: HeatSource;
   grid_invert: boolean;

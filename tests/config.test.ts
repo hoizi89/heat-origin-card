@@ -8,9 +8,29 @@ describe("configuration", () => {
     expect(() => assertConfig({ type: "custom:heat-origin-card", entities: { mode: "sensor.x" } })).not.toThrow();
   });
 
-  it("turns the storage section on only when there are stores", () => {
+  it("leaves the storage section to the flow, which already draws every store", () => {
     expect(resolveConfig({ type: "t", entities: { mode: "sensor.x" } }).sections.stores).toBe(false);
-    expect(resolveConfig(FULL_CONFIG).sections.stores).toBe(true);
+    // The flow draws each store as a level gauge, so a section repeating it stays off …
+    expect(resolveConfig(FULL_CONFIG).sections.stores).toBe(false);
+    // … unless there is no flow to repeat, or unless it is asked for.
+    expect(resolveConfig({ ...FULL_CONFIG, sections: { flow: false } }).sections.stores).toBe(true);
+    expect(resolveConfig({ ...FULL_CONFIG, sections: { stores: true } }).sections.stores).toBe(true);
+  });
+
+  it("reads a symbol and a storey out of every name", () => {
+    const resolved = resolveConfig(FULL_CONFIG);
+    expect(resolved.circuits.map((x) => x.icon)).toEqual(["floor", "radiator"]);
+    expect(resolved.circuits.map((x) => x.short)).toEqual(["EG", "OG"]);
+    expect(resolved.stores.map((x) => x.icon)).toEqual(["water", "buffer"]);
+  });
+
+  it("moves every switch together with the detail dial, and lets one be overruled", () => {
+    const low = resolveConfig({ type: "t", entities: { mode: "sensor.x" }, flow: { detail: "low" } }).flow;
+    expect(low.labels).toBe("icon");
+    expect(low.foot).toBe("drive");
+    const mixed = resolveConfig({ type: "t", entities: { mode: "sensor.x" }, flow: { detail: "low", labels: "name" } }).flow;
+    expect(mixed.labels).toBe("name");
+    expect(mixed.foot).toBe("drive");
   });
 
   it("recognises hot water by name and treats the rest as buffers", () => {
@@ -29,7 +49,7 @@ describe("configuration", () => {
 
   it("shows the editor the values the card uses, not blanks for what the YAML leaves out", () => {
     const data = editorData({ type: "t", entities: { mode: "sensor.x" }, stores: [{ name: "Warmwasser", top: "sensor.t" }] });
-    expect(data.sections).toMatchObject({ flow: true, day: true, stores: true });
+    expect(data.sections).toMatchObject({ flow: true, day: true, stores: false });
     expect(data.font).toBe("system");
     expect(data.source).toBe("air");
     expect(data.shape).toBe("standard");
