@@ -92,13 +92,15 @@ const PALETTE: Tone = {
   sun: "var(--ho-sun)"
 };
 
-/** The drawing's grid. The blocks set the height; the circle only has to fit inside it. */
-const BOX_H = 64;
-const BOX_GAP = 28;
-const BOX_W = 116;
-const R_PUMP = 30;
-/** The heat pump rides above the middle, which frees the corridor under it. */
-const PUMP_LIFT = 10;
+/**
+ * The split arrangement — stores left, the heat pump between, circuits right — in the
+ * two sizes it comes in: three things beside each other at 368 units, where each box
+ * is 116 wide and the circle small; or the same three at 600, once the card is wide
+ * enough, where the boxes are as wide as the columns' and the circle as large. The
+ * heat pump rides above the middle, which frees the corridor under it.
+ */
+const SPLIT = { W: 368, boxW: 116, boxH: 64, gap: 28, r: 30, lift: 10 };
+const WIDE = { W: 600, boxW: 196, boxH: 80, gap: 14, r: 48, lift: 10 };
 /** The forecast reads the last twenty minutes: a shower shows up at once. */
 const TREND_WINDOW = 20 * 60 * 1000;
 /** The direction reads a whole hour: a buffer losing standby heat moves a tenth of a
@@ -129,6 +131,7 @@ export class HeatOriginCard extends LitElement {
     _config: { state: true },
     _points: { state: true },
     _narrow: { state: true },
+    _wide: { state: true },
     _trend: { state: true }
   };
 
@@ -140,6 +143,7 @@ export class HeatOriginCard extends LitElement {
   /** Each store's own temperature over the last while, for how long it still lasts. */
   private _trend: Record<string, TrendPoint[]> = {};
   private _narrow = false;
+  private _wide = false;
   private _fetchedAt = 0;
   private _fetching = false;
   private _resize?: ResizeObserver;
@@ -174,6 +178,9 @@ export class HeatOriginCard extends LitElement {
       const width = entries[0]?.contentRect.width ?? 0;
       const narrow = width > 0 && width < NARROW;
       if (narrow !== this._narrow) this._narrow = narrow;
+      const from = this._config?.wide_from ?? 0;
+      const wide = from > 0 && width >= from;
+      if (wide !== this._wide) this._wide = wide;
     });
     this._resize.observe(this);
   }
@@ -863,8 +870,9 @@ export class HeatOriginCard extends LitElement {
 
   private _renderFlow() {
     const config = this._config as ResolvedConfig;
+    if (this._wide) return this._renderSplit(WIDE);
     if (config.flow.layout === "columns" && !this._narrow) return this._renderColumns();
-    return this._renderSplit();
+    return this._renderSplit(SPLIT);
   }
 
   /**
@@ -960,7 +968,7 @@ export class HeatOriginCard extends LitElement {
     `;
   }
 
-  private _renderSplit() {
+  private _renderSplit(g: typeof SPLIT) {
     const config = this._config as ResolvedConfig;
     const mode = this._mode();
     const live = this._live();
@@ -974,20 +982,20 @@ export class HeatOriginCard extends LitElement {
 
     const days = this._days();
     const showClock = config.flow.ring !== "shares";
-    const rRing = showClock ? R_PUMP + 7 : R_PUMP;
+    const rRing = showClock ? g.r + 7 : g.r;
     const reach = rRing + 4;
     const outer = showClock ? rRing + 26 : rRing + 2;
 
     const rows = Math.max(stores.length, circuits.length);
-    const stack = rows ? rows * BOX_H + (rows - 1) * BOX_GAP : 0;
+    const stack = rows ? rows * g.boxH + (rows - 1) * g.gap : 0;
     const H = Math.max(stack, 2 * outer + 4) + 8;
     const y0 = (H - stack) / 2;
     // The blocks keep the true middle; only the heat pump rides above it.
-    const cy = Math.max(outer + 2, Math.round(H / 2) - PUMP_LIFT);
-    const cx = DRAW_W / 2;
-    const leftEdge = 1 + BOX_W;
-    const rightEdge = DRAW_W - BOX_W - 1;
-    const midOf = (i: number) => y0 + i * (BOX_H + BOX_GAP) + BOX_H / 2;
+    const cy = Math.max(outer + 2, Math.round(H / 2) - g.lift);
+    const cx = g.W / 2;
+    const leftEdge = 1 + g.boxW;
+    const rightEdge = g.W - g.boxW - 1;
+    const midOf = (i: number) => y0 + i * (g.boxH + g.gap) + g.boxH / 2;
 
     if (this._narrow) return this._renderFlowList(stores.concat(circuits), running);
 
@@ -1025,24 +1033,24 @@ export class HeatOriginCard extends LitElement {
     let uid = 0;
     stores.forEach((model, i) => {
       uid += 1;
-      parts.push(box(model, 1, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(config.stores[i]?.top)));
+      parts.push(box(model, 1, midOf(i) - g.boxH / 2, g.boxW, g.boxH, PALETTE, style, uid, () => this._moreInfo(config.stores[i]?.top)));
     });
     circuits.forEach((model, i) => {
       uid += 1;
       const circuit = config.circuits[i];
       const entity = circuit?.pump ?? circuit?.state ?? circuit?.flow ?? circuit?.temperature;
-      parts.push(box(model, rightEdge, midOf(i) - BOX_H / 2, BOX_W, BOX_H, PALETTE, style, uid, () => this._moreInfo(entity)));
+      parts.push(box(model, rightEdge, midOf(i) - g.boxH / 2, g.boxW, g.boxH, PALETTE, style, uid, () => this._moreInfo(entity)));
     });
 
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
 
-    parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
-    if (running && hasBoth) parts.push(this._ring(cx, cy, R_PUMP, heat, electric, shares));
-    parts.push(this._centre(cx, cy, R_PUMP, heat, electric, live.cop, running, mode));
+    parts.push(svg`<circle cx=${cx} cy=${cy} r=${g.r} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
+    if (running && hasBoth) parts.push(this._ring(cx, cy, g.r, heat, electric, shares));
+    parts.push(this._centre(cx, cy, g.r, heat, electric, live.cop, running, mode));
 
     return html`
       <div class="section">
-        <svg viewBox="0 0 ${DRAW_W} ${H}" role="img" aria-label=${this._modeLabel(mode.kind, mode.raw)}>${parts}</svg>
+        <svg class=${g === WIDE ? "wide" : ""} viewBox="0 0 ${g.W} ${H}" role="img" aria-label=${this._modeLabel(mode.kind, mode.raw)}>${parts}</svg>
         ${this._footBlock(running)}
       </div>
     `;

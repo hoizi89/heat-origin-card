@@ -1,6 +1,6 @@
 {
   "name": "heat-origin-card",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "A heat pump card for Home Assistant: where the heat comes from, where it goes, and how the day went.",
   "license": "MIT",
   "type": "module",

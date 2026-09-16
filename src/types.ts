@@ -232,6 +232,12 @@ export interface HeatOriginCardConfig {
   font?: "system" | "mono";
   /** Kelvin per hour; below this measured fall no remaining time is shown. */
   forecast_min_slope?: number;
+  /**
+   * From this many pixels of card width the drawing spreads out: stores left, the heat
+   * pump between, circuits right, every box as wide as the columns' and the circle as
+   * large — instead of the columns simply scaling up. 0 never.
+   */
+  wide_from?: number;
 }
 
 export interface ResolvedFlow {
@@ -262,6 +268,7 @@ export interface ResolvedConfig {
   flow: ResolvedFlow;
   /** Below this measured fall per hour the card says nothing about how long a store lasts. */
   forecast_min_slope: number;
+  wide_from: number;
   source: HeatSource;
   grid_invert: boolean;
   battery_invert: boolean;

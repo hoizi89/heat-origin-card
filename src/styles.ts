@@ -128,6 +128,12 @@ export const cardStyles = css`
     overflow: visible;
   }
 
+  /* Spread out, the drawing stops growing where its words would get silly. */
+  .section svg.wide {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
   svg text {
     font-family: var(--ha-font-family-body, var(--primary-font-family, sans-serif));
     font-variant-numeric: tabular-nums;

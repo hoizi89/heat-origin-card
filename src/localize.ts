@@ -80,6 +80,8 @@ const en: Table = {
   "editor.source_air": "Air",
   "editor.source_ground": "Ground",
   "editor.source_water": "Groundwater",
+  "editor.wide_from": "Spread out from a card width of",
+  "editor.help_wide_from": "Pixels. From there the stores stand left, the heat pump between, the circuits right, all at full size, instead of the two columns simply scaling up. 0 never.",
 
   "editor.entities": "Sensors",
   "editor.mode": "Operating state",
@@ -276,6 +278,8 @@ const de: Table = {
   "editor.source_air": "Luft",
   "editor.source_ground": "Erdreich",
   "editor.source_water": "Grundwasser",
+  "editor.wide_from": "Breite Anordnung ab Kartenbreite",
+  "editor.help_wide_from": "Pixel. Ab dort stehen die Speicher links, die Wärmepumpe in der Mitte, die Heizkreise rechts, alles in voller Größe – statt dass die zwei Spalten einfach mitwachsen. 0 nie.",
 
   "editor.entities": "Sensoren",
   "editor.mode": "Betriebszustand",

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from "vitest";
-import { CARD_TYPE } from "../src/config";
+import { CARD_TYPE, resolveConfig } from "../src/config";
 import type { HeatOriginCardConfig, HomeAssistant } from "../src/types";
 import { FULL_CONFIG, IDS, makeHass } from "./fixtures";
 
@@ -39,6 +39,8 @@ const text = (root: ShadowRoot | Element) => {
   }
   return parts.join(" ").replace(/\s+/g, " ");
 };
+
+const resolveWide = (c: HeatOriginCardConfig) => resolveConfig(c).wide_from;
 
 const idle = () =>
   makeHass({
@@ -266,6 +268,25 @@ describe("the flow", () => {
     expect(text(hotWater)).toContain("PV 57,5°");
     expect(text(hotWater)).toContain("40°");
     expect(text(hotWater)).toContain("Eco");
+  });
+
+  it("spreads out once the card is wide: three across at 600 units, full-size boxes, the large circle", async () => {
+    const { card, root } = await mount(FULL_CONFIG);
+    (card as unknown as { _wide: boolean })._wide = true;
+    await card.updateComplete;
+    const svg = root.querySelector(".section svg") as SVGElement;
+    expect(svg.getAttribute("viewBox")).toMatch(/^0 0 600 /);
+    expect(svg.classList.contains("wide")).toBe(true);
+    expect(boxX(root, "Warmwasser")).toBeLessThan(10);
+    expect(boxX(root, "FBH EG")).toBeGreaterThan(380);
+    const rect = [...root.querySelectorAll(".section svg rect")].find((r) => r.parentElement?.textContent?.includes("FBH EG"));
+    expect(Number(rect?.getAttribute("width"))).toBe(196);
+    // The large type: the room figure at 16.5, as in the columns.
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG")) as Element;
+    expect([...eg.querySelectorAll("text")].some((t) => t.getAttribute("font-size") === "16.5")).toBe(true);
+    // Never, when asked never.
+    expect(resolveWide({ ...FULL_CONFIG, wide_from: 0 })).toBe(0);
+    expect(resolveWide(FULL_CONFIG)).toBe(560);
   });
 
   it("names the store's empty and full ends in its tooltip", async () => {

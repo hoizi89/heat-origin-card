@@ -17,10 +17,11 @@ beforeAll(async () => {
   await import("../src/heat-origin-card");
 });
 
-async function mount(config: HeatOriginCardConfig, hass: HomeAssistant = makeHass()) {
+async function mount(config: HeatOriginCardConfig, hass: HomeAssistant = makeHass(), wide = false) {
   const card = document.createElement(CARD_TYPE) as Card;
   card.setConfig(config);
   card.hass = hass;
+  (card as unknown as { _wide: boolean })._wide = wide;
   document.body.append(card);
   for (let i = 0; i < 3; i += 1) {
     await new Promise((r) => setTimeout(r, 0));
@@ -80,14 +81,16 @@ const looks: Array<[string, Partial<HeatOriginCardConfig>]> = [
   ["thermometer, curve, names", { flow: { gauge: "scale", curve: true, labels: "name" } }],
   ["bar, box", { flow: { gauge: "bar" } }],
   ["split", { layout: "split" }],
-  ["split thermometer", { layout: "split", flow: { gauge: "scale", curve: true } }]
+  ["split thermometer", { layout: "split", flow: { gauge: "scale", curve: true } }],
+  ["wide", { wide_from: 1 }],
+  ["wide thermometer, curve", { wide_from: 1, flow: { gauge: "scale", curve: true } }]
 ];
 
 describe("nothing is written over anything else", () => {
   for (const [state, hass] of states) {
     for (const [look, extra] of looks) {
       it(`${state}, ${look}`, async () => {
-        const root = await mount({ ...FULL_CONFIG, ...extra, flow: { ...FULL_CONFIG.flow, ...(extra.flow ?? {}) } }, hass());
+        const root = await mount({ ...FULL_CONFIG, ...extra, flow: { ...FULL_CONFIG.flow, ...(extra.flow ?? {}) } }, hass(), extra.wide_from === 1);
         const ws = words(root);
         expect(ws.length).toBeGreaterThan(10);
         expect(collisions(ws)).toEqual([]);

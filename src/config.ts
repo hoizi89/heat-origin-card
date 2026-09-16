@@ -110,6 +110,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     ...foldCirculation(config),
     flow: resolveFlow(config.flow ?? {}, config.layout),
     forecast_min_slope: config.forecast_min_slope ?? 0.4,
+    wide_from: typeof config.wide_from === "number" && config.wide_from >= 0 ? config.wide_from : 560,
     source: config.source === "ground" || config.source === "water" ? config.source : "air",
     grid_invert: config.grid_invert ?? false,
     battery_invert: config.battery_invert ?? false,
@@ -147,6 +148,7 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
   return {
     ...(card as unknown as HeatOriginCardConfig),
     layout,
+    wide_from: resolved.wide_from,
     font: resolved.font,
     source: resolved.source,
     shape: resolved.shape,
@@ -247,7 +249,8 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
         // The layout's words are long; they get the row to themselves.
         choice("layout"),
         grid([words("shape", ["standard", "compact"]), words("font", ["system", "mono"])]),
-        words("source", ["air", "ground", "water"])
+        words("source", ["air", "ground", "water"]),
+        { name: "wide_from", selector: { number: { min: 0, max: 2000, step: 10, mode: "box", unit_of_measurement: "px" } } }
       ]
     },
     {
@@ -287,7 +290,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
   ];
 
   const labelled = [
-    "title", "layout", "shape", "font", "source", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
+    "title", "layout", "shape", "font", "source", "wide_from", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
     "house_power", "grid_power", "battery_power", "cop", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
     "scale", "trend", "rest_colour", "buffer_line", "foot", "balance",
@@ -295,7 +298,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "source", "volume", "usable_min", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
+  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
 
   return {
     schema,
