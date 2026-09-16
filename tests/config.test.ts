@@ -111,8 +111,18 @@ describe("configuration", () => {
     expect(back.stores?.[0]).toMatchObject({ marks: { eco: 44.5, target: 48.5, pv: 57.5 } });
     expect(back.circuits).toHaveLength(2);
     expect(back).not.toHaveProperty("store_0");
+    // One empty slot after each list: nothing until somebody writes in it, then the next entry.
+    expect(data.circuit_2).toEqual({});
+    expect(data.store_2).toEqual({});
+    const grown = foldEditorData({ ...data, circuit_2: { name: "Bad", state: "sensor.hc3", icon: "" } });
+    expect(grown.circuits).toHaveLength(3);
+    expect(grown.circuits?.[2]).toEqual({ name: "Bad", state: "sensor.hc3" });
+    expect(grown.stores).toHaveLength(2);
     const form = getConfigForm("de", FULL_CONFIG);
-    expect(JSON.stringify(form.schema)).toContain('"title":"Warmwasser"');
+    const flat = JSON.stringify(form.schema);
+    expect(flat).toContain('"title":"Speicher 1 · Warmwasser"');
+    expect(flat).toContain('"title":"Heizkreis hinzufügen"');
+    expect(flat).toContain('"title":"Speicher hinzufügen"');
     expect(form.computeLabel({ name: "eco" })).toBe("Eco");
     expect(form.computeLabel({ name: "volume" })).toBe("Volumen");
   });

@@ -16,7 +16,7 @@ Until the card is in HACS, add this repository as a custom repository of type *D
 
 Only `entities.mode` is required. The card reads the rest of what it can out of what is already there: a circuit named "FBH EG" gets the underfloor symbol and the mark EG, "Heizkörper OG" a radiator and OG, and a buffer measures itself against the flow of the warmest circuit it is feeding instead of a fixed number that is wrong in September and wrong again in January.
 
-The visual editor offers a choice with three or more looks as a short list of what each looks like, and one with two as a switch. Most choices only show in one situation — while the heat pump runs, while it stands, while the buffer carries the house — and the helper under each says which. Every circuit and store in the card gets a group of its own there, with its sensors, litres, set-points and symbol; adding or removing one, extra figures and state words are done in YAML.
+The visual editor offers a choice with three or more looks as a short list of what each looks like, and one with two as a switch. Most choices only show in one situation — while the heat pump runs, while it stands, while the buffer carries the house — and the helper under each says which. Every circuit and store gets a group of its own there, with its sensors, litres, set-points and symbol, and each list ends in an empty group to add another; extra figures and state words are set in YAML.
 
 ```yaml
 type: custom:heat-origin-card

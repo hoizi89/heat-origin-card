@@ -86,9 +86,11 @@ const en: Table = {
 
   "editor.entities": "Sensors",
   "editor.mode": "Operating state",
-  "editor.help_mode": "Every circuit and store has a group below. Adding or removing one, extra figures and state words are done in YAML.",
+  "editor.help_mode": "Circuits and stores have groups of their own below, each list ending in an empty one to add another. Extra figures and state words are set in YAML.",
   "editor.store": "Store",
+  "editor.store_add": "Add a store",
   "editor.circuit_one": "Circuit",
+  "editor.circuit_add": "Add a circuit",
   "editor.name": "Name",
   "editor.kind": "Kind",
   "editor.kind_hot_water": "Hot water",
@@ -141,9 +143,10 @@ const en: Table = {
   "editor.electric_today": "Electricity today (total)",
 
   "editor.group_general": "General",
-  "editor.group_pump": "The heat pump",
-  "editor.group_circuits": "The heating circuits",
-  "editor.group_stores": "The stores: hot water and buffer",
+  "editor.group_pump_sensors": "Heat pump · sensors",
+  "editor.group_pump": "Heat pump · display",
+  "editor.group_circuits": "Circuits · display",
+  "editor.group_stores": "Stores · display",
   "editor.group_boxes": "Presentation",
   "editor.help_source": "Names the ambient heat in the foot while it runs: air, ground or water.",
 
@@ -296,9 +299,11 @@ const de: Table = {
 
   "editor.entities": "Sensoren",
   "editor.mode": "Betriebszustand",
-  "editor.help_mode": "Jeder Heizkreis und Speicher hat unten eine eigene Gruppe. Dazu oder weg kommt einer in YAML; Zusatzwerte und Zustandswörter ebenso.",
+  "editor.help_mode": "Heizkreise und Speicher haben unten eigene Gruppen; jede Liste endet mit einer leeren zum Hinzufügen. Zusatzwerte und Zustandswörter kommen in YAML.",
   "editor.store": "Speicher",
+  "editor.store_add": "Speicher hinzufügen",
   "editor.circuit_one": "Heizkreis",
+  "editor.circuit_add": "Heizkreis hinzufügen",
   "editor.name": "Name",
   "editor.kind": "Art",
   "editor.kind_hot_water": "Warmwasser",
@@ -351,9 +356,10 @@ const de: Table = {
   "editor.electric_today": "Strom heute (gesamt)",
 
   "editor.group_general": "Allgemein",
-  "editor.group_pump": "Die Wärmepumpe",
-  "editor.group_circuits": "Die Heizkreise",
-  "editor.group_stores": "Die Speicher: Warmwasser und Puffer",
+  "editor.group_pump_sensors": "Wärmepumpe · Sensoren",
+  "editor.group_pump": "Wärmepumpe · Anzeige",
+  "editor.group_circuits": "Heizkreise · Anzeige",
+  "editor.group_stores": "Speicher · Anzeige",
   "editor.group_boxes": "Darstellung",
   "editor.help_source": "Benennt die Umweltwärme in der Fußzeile, solange sie läuft: Luft, Erdreich oder Wasser.",
 

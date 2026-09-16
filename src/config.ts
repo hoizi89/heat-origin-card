@@ -148,8 +148,14 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
   const flow: Record<string, unknown> = { ...(config.flow ?? {}) };
   for (const key of LEGACY_FLOW_KEYS) delete flow[key];
   const { extras: _extras, layout, ...choices } = resolved.flow;
-  (config.circuits ?? []).forEach((c, i) => (card[listKey("circuit", i)] = { ...c }));
-  (config.stores ?? []).forEach((s, i) => (card[listKey("store", i)] = { ...s }));
+  // Every circuit and store as its own key, and one empty slot after each list: filled
+  // in, it becomes the next entry; left empty, it is dropped on the way back.
+  const circuits = config.circuits ?? [];
+  const stores = config.stores ?? [];
+  circuits.forEach((c, i) => (card[listKey("circuit", i)] = { ...c }));
+  stores.forEach((s, i) => (card[listKey("store", i)] = { ...s }));
+  card[listKey("circuit", circuits.length)] = {};
+  card[listKey("store", stores.length)] = {};
   return {
     ...(card as unknown as HeatOriginCardConfig),
     layout,
@@ -181,8 +187,13 @@ export function foldEditorData(data: Record<string, unknown>): HeatOriginCardCon
   const lists: Record<"store" | "circuit", Array<[number, unknown]>> = { store: [], circuit: [] };
   for (const [key, value] of Object.entries(data)) {
     const m = LIST_KEY.exec(key);
-    if (m) lists[m[1] as "store" | "circuit"].push([Number(m[2]), tidy(value)]);
-    else out[key] = value;
+    if (!m) {
+      out[key] = value;
+      continue;
+    }
+    const clean = tidy(value);
+    // The empty slot, or an entry cleared out completely, is no entry.
+    if (clean && typeof clean === "object" && Object.keys(clean as object).length > 0) lists[m[1] as "store" | "circuit"].push([Number(m[2]), clean]);
   }
   const inOrder = (items: Array<[number, unknown]>) => items.sort((a, b) => a[0] - b[0]).map(([, v]) => v);
   if (lists.circuit.length) out.circuits = inOrder(lists.circuit);
@@ -218,31 +229,38 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
   const text = (name: string) => ({ name, selector: { text: {} } });
   const grid = (schema: unknown[]) => ({ type: "grid", schema });
 
-  const storeForm = (store: StoreConfig, i: number) => ({
+  const icons = () => words("icon", ["floor", "radiator", "fancoil", "pipe", "water", "buffer", "loop"]);
+  // The last group of each list is empty: "add a circuit". Its title says so, and a name
+  // typed there is enough to make it the next entry.
+  const storeForm = (store: StoreConfig | undefined, i: number) => ({
     type: "expandable",
     name: listKey("store", i),
-    title: store.name || `${t("editor.store")} ${i + 1}`,
+    title: store ? `${t("editor.store")} ${i + 1} · ${store.name || "…"}` : t("editor.store_add"),
     schema: [
       grid([text("name"), words("kind", ["hot_water", "buffer"])]),
-      grid([{ name: "top", required: true, selector: sensor }, { name: "bottom", selector: sensor }]),
+      grid([icons(), text("short")]),
+      grid([{ name: "top", selector: sensor }, { name: "bottom", selector: sensor }]),
       grid([{ name: "volume", selector: { number: { min: 0, max: 5000, step: 10, mode: "box", unit_of_measurement: "l" } } }, degrees("usable_min"), degrees("usable_max")]),
       { type: "expandable", name: "marks", title: t("editor.marks"), schema: [grid(MARKS.map(degrees))] },
       grid([{ name: "circulation", selector: sensor }, { name: "circulation_pump", selector: onOff }]),
       words("due_at", ["eco", "target", "pv", "max"])
     ]
   });
-  const circuitForm = (circuit: CircuitConfig, i: number) => ({
+  const circuitForm = (circuit: CircuitConfig | undefined, i: number) => ({
     type: "expandable",
     name: listKey("circuit", i),
-    title: circuit.name || `${t("editor.circuit_one")} ${i + 1}`,
+    title: circuit ? `${t("editor.circuit_one")} ${i + 1} · ${circuit.name || "…"}` : t("editor.circuit_add"),
     schema: [
       grid([text("name"), text("short")]),
+      icons(),
       grid([{ name: "state", selector: sensor }, { name: "pump", selector: onOff }]),
       grid([{ name: "flow", selector: sensor }, { name: "return", selector: sensor }]),
       grid([{ name: "room", selector: sensor }, { name: "target_room", selector: sensor }]),
-      grid([{ name: "curve_flow", selector: sensor }, words("icon", ["floor", "radiator", "fancoil", "pipe", "water", "buffer", "loop"])])
+      { name: "curve_flow", selector: sensor }
     ]
   });
+  const circuits = config?.circuits ?? [];
+  const stores = config?.stores ?? [];
 
   const schema = [
     {
@@ -261,7 +279,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     {
       type: "expandable",
       name: "entities",
-      title: t("editor.entities"),
+      title: t("editor.group_pump_sensors"),
       schema: [
         { name: "mode", required: true, selector: sensor },
         grid(
@@ -272,14 +290,16 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
         )
       ]
     },
-    ...(config?.circuits ?? []).map(circuitForm),
-    ...(config?.stores ?? []).map(storeForm),
-    // One group per thing in the drawing: the heat pump, the circuits, the stores, and
-    // the presentation every box and the foot share. A choice with three or more looks
-    // is a list, one with two a switch; the helper under each says when it is on the
-    // screen at all.
+    // The heat pump, then the circuits, then the stores: each thing's sensors first, its
+    // group of one empty slot to add another, and its looks last. A choice with three or
+    // more looks is a list, one with two a switch; the helper under each says when it is
+    // on the screen at all.
     { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
+    ...circuits.map(circuitForm),
+    circuitForm(undefined, circuits.length),
     { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), choice("running"), toggle("curve")] },
+    ...stores.map(storeForm),
+    storeForm(undefined, stores.length),
     {
       type: "expandable",
       name: "flow",
