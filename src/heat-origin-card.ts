@@ -253,22 +253,44 @@ export class HeatOriginCard extends LitElement {
    * buffer against a fixed 30 °C says it is empty on a September morning when it is
    * carrying the house, and that it is full in January when it cannot.
    */
+  /** A setting that is a number, a number written as text, or the id of an entity that reports it. */
+  private _setting(value: number | string | undefined): number | undefined {
+    if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+    if (value === undefined || value === "") return undefined;
+    const asNumber = Number(value.replace(",", "."));
+    return Number.isFinite(asNumber) ? asNumber : this._num(value);
+  }
+
+  /** The store's set-points as numbers, whichever way they were written. */
+  private _marks(store: StoreConfig): { eco?: number; target?: number; pv?: number; max?: number } {
+    return {
+      eco: this._setting(store.marks?.eco),
+      target: this._setting(store.marks?.target),
+      pv: this._setting(store.marks?.pv),
+      max: this._setting(store.marks?.max)
+    };
+  }
+
   private _floor(store: StoreConfig & { kind: StoreKind }): number {
-    if (store.usable_min !== undefined) return store.usable_min;
+    const set = this._setting(store.usable_min);
+    if (set !== undefined) return set;
     if (store.kind === "hot_water") return 40;
     const config = this._config as ResolvedConfig;
     let warmest: number | undefined;
     for (const circuit of config.circuits) {
       if (circuit.kind !== "heating" || !this._circuitTaking(circuit)) continue;
-      const flow = this._num(circuit.flow ?? circuit.temperature);
-      if (flow !== undefined && (warmest === undefined || flow > warmest)) warmest = flow;
+      // What the circuit is asking for, where the controller says; else what it gets.
+      const want = this._num(circuit.curve_flow);
+      const need = want !== undefined && want > 5 ? want : this._num(circuit.flow ?? circuit.temperature);
+      if (need !== undefined && (warmest === undefined || need > warmest)) warmest = need;
     }
     return warmest ?? 30;
   }
 
   private _ceiling(store: StoreConfig & { kind: StoreKind }, floor: number, top: number | undefined): number {
-    if (store.usable_max !== undefined) return store.usable_max;
-    const marks = store.marks ?? {};
+    const set = this._setting(store.usable_max);
+    if (set !== undefined) return set;
+    const marks = this._marks(store);
     const highest = Math.max(...[marks.max, marks.pv, marks.target, marks.eco].filter((v): v is number => v !== undefined), -Infinity);
     if (Number.isFinite(highest) && highest > floor) return highest;
     // Hot water is nearly always marked; a heating buffer rarely is, and a heat pump
@@ -345,7 +367,7 @@ export class HeatOriginCard extends LitElement {
     const store = config.stores.find((st) => st.kind === "hot_water");
     if (!store) return undefined;
     const key = store.due_at ?? "eco";
-    const at = store.marks?.[key];
+    const at = this._marks(store)[key];
     if (at === undefined) return undefined;
     if (this._mode().kind === "hot_water") return undefined;
     const top = this._num(store.top);
@@ -598,8 +620,9 @@ export class HeatOriginCard extends LitElement {
       const usable = this._usable(store, floor);
       // Every set-point carries its own name to its own notch: a bare line on the bar
       // is something to wonder about, and wondering is what the card is meant to end.
+      const set = this._marks(store);
       const marks = (["eco", "target", "pv", "max"] as const)
-        .map((key) => ({ key, value: store.marks?.[key] }))
+        .map((key) => ({ key, value: set[key] }))
         .filter((x): x is { key: "eco" | "target" | "pv" | "max"; value: number } =>
           x.value !== undefined && x.value > floor && x.value < ceiling)
         .map((x) => ({ at: at(x.value), name: this._t(`mark.${x.key}`) }));
@@ -648,7 +671,7 @@ export class HeatOriginCard extends LitElement {
                 scale: [end(floor), end(ceiling)] as [string, string],
                 // The set-point that is the top of the scale names its right-hand end.
                 ceilingName: (["eco", "target", "pv", "max"] as const)
-                  .filter((key) => store.marks?.[key] !== undefined && Math.abs((store.marks?.[key] as number) - ceiling) < 0.05)
+                  .filter((key) => set[key] !== undefined && Math.abs((set[key] as number) - ceiling) < 0.05)
                   .map((key) => this._t(`mark.${key}`))[0],
                 under: this._t("stores.under")
               },

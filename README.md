@@ -83,10 +83,10 @@ flow:
 | `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |
 | `circuits[].short`, `stores[].short` | guessed | The mark under the symbol, usually the storey. |
 | `stores[].kind` | guessed from the name | `hot_water` or `buffer`. |
-| `stores[].marks` | | `eco`, `target`, `pv`, `max` as numbers; each is named at its notch on the level. |
+| `stores[].marks` | | `eco`, `target`, `pv`, `max` — each a number in °C or the id of the entity that reports it (Lambda: `boil1_target_high_temperature`); each is named at its notch on the level. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh and the power being drawn. |
-| `stores[].usable_min` | 40 hot water; a buffer: the warmest running circuit's flow, else 30 | Where the level reads empty. |
-| `stores[].usable_max` | the highest mark, else `usable_min` + 20 K (buffer) or + 12 K (hot water), stretched to the next five above the store's own temperature | Where the level reads full. Both ends stand under the level and are named in the box's tooltip. |
+| `stores[].usable_min` | 40 hot water; a buffer: what the warmest running circuit asks for (its `curve_flow`), else its flow, else 30 | Where the level reads empty. A number or an entity. |
+| `stores[].usable_max` | the highest mark, else `usable_min` + 20 K (buffer) or + 12 K (hot water), stretched to the next five above the store's own temperature | Where the level reads full. A number or an entity — a controller's maximum buffer temperature (Lambda: `buff1_maximum_buffer_temp`) is the honest one. Both ends stand under the level and are named in the box's tooltip. |
 | `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store and gives nothing back, so it belongs to that store rather than to a circuit of its own; a circuit named or marked as circulation is moved there. |
 | `stores[].due_at` | `eco` | Which mark the measured cooling is counted down to. The line names that mark rather than promising a start: what the heat pump does when it gets there is its own business, and a surplus of sun may have it charge long before. |
 | `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts and draws no trend. |

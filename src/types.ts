@@ -113,11 +113,14 @@ export interface CircuitConfig {
   short?: string;
 }
 
+/** A number in °C, or the id of an entity that reports it: a controller's own set-point is worth more than a copy of it. */
+export type Setting = number | string;
+
 export interface StoreMarks {
-  eco?: number;
-  target?: number;
-  pv?: number;
-  max?: number;
+  eco?: Setting;
+  target?: Setting;
+  pv?: Setting;
+  max?: Setting;
 }
 
 export interface StoreConfig {
@@ -129,7 +132,7 @@ export interface StoreConfig {
   circulation?: string;
   /** The circulation pump; on means hot water is being moved through the pipes. */
   circulation_pump?: string;
-  /** Set-points entered as numbers: many integrations report them wrongly. */
+  /** Set-points, as numbers or as the entities that report them. */
   marks?: StoreMarks;
   /** Litres; with it the card shows the usable heat in kWh. */
   volume?: number;
@@ -141,9 +144,9 @@ export interface StoreConfig {
   due_at?: "eco" | "target" | "pv" | "max";
   /** Where the level reads empty: 40 °C for a shower, 30 °C for underfloor heating.
    *  A buffer without one measures against the flow of its warmest running circuit. */
-  usable_min?: number;
+  usable_min?: Setting;
   /** Where the level reads full; the highest mark, else the minimum plus 20 K for a buffer and 12 K for hot water. */
-  usable_max?: number;
+  usable_max?: Setting;
   icon?: string;
   short?: string;
 }

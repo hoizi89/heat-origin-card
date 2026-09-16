@@ -234,16 +234,17 @@ describe("the flow", () => {
       return hass;
     };
     const draw = await mount({ ...FULL_CONFIG, flow: { store_head: "draw" } }, falling(2));
-    const slow = await mount(FULL_CONFIG, falling(0.6));
+    const slow = await mount(FULL_CONFIG, falling(0.45));
     const label = (root: ShadowRoot) => {
       const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("Puffer")) as Element;
       return text(g);
     };
-    // 47,5° mean over a floor of 25,8° at 0,6 K/h is thirty-six hours: a day or more, not a number.
+    // The floor is what the running circuit asks for, 30,6°: 47,5° mean over it at 0,45 K/h is
+    // thirty-eight hours — a day or more, not a number — and at 2 K/h eight and a half.
     expect(label(slow.root)).toContain("≈ NOCH > 1 TAG");
     const fast = await mount(FULL_CONFIG, falling(2));
-    expect(label(fast.root)).toContain("≈ NOCH 10 H 50");
-    expect(fast.root.querySelector(".chip")?.textContent).toContain("noch 10 h 50");
+    expect(label(fast.root)).toContain("≈ NOCH 8 H 30");
+    expect(fast.root.querySelector(".chip")?.textContent).toContain("noch 8 h 30");
     expect([...fast.root.querySelectorAll(".section svg title")].some((t) => t.textContent?.includes("hochgerechnet"))).toBe(true);
     // 300 litres falling 2 K/h is 0,70 kW, and it goes to the storey that takes it.
     expect(label(draw.root)).toContain("0,70 KW → EG");
@@ -388,6 +389,23 @@ describe("the flow", () => {
     // Never, when asked never.
     expect(resolveWide({ ...FULL_CONFIG, wide_from: 0 })).toBe(0);
     expect(resolveWide(FULL_CONFIG)).toBe(560);
+  });
+
+  it("takes a set-point or a limit from the entity that reports it as readily as from a number", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_boil1_target_high_temperature": { entity_id: "sensor.lambdawp_boil1_target_high_temperature", state: "48.5", attributes: {} },
+      "sensor.lambdawp_buff1_maximum_buffer_temp": { entity_id: "sensor.lambdawp_buff1_maximum_buffer_temp", state: "55.0", attributes: {} }
+    });
+    const stores = (FULL_CONFIG.stores ?? []).map((s, i) =>
+      i === 0
+        ? { ...s, marks: { ...s.marks, target: "sensor.lambdawp_boil1_target_high_temperature" } }
+        : { ...s, usable_max: "sensor.lambdawp_buff1_maximum_buffer_temp" }
+    );
+    const { root } = await mount({ ...FULL_CONFIG, stores }, hass);
+    const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");
+    expect(titles.find((t) => t.startsWith("Puffer"))).toContain("voll ab 55,0 °C");
+    const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser")) as Element;
+    expect(text(hotWater)).toContain("Soll");
   });
 
   it("names the store's empty and full ends in its tooltip", async () => {

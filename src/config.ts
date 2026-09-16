@@ -170,6 +170,8 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
 /** A field cleared in the form comes back empty; it is dropped rather than written as "". */
 function tidy(value: unknown): unknown {
   if (typeof value === "number") return Number.isNaN(value) ? undefined : value;
+  // A number typed into a text field is a number.
+  if (typeof value === "string" && /^\s*-?\d+([.,]\d+)?\s*$/.test(value)) return Number(value.trim().replace(",", "."));
   if (!value || typeof value !== "object" || Array.isArray(value)) return value === "" || value === null ? undefined : value;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -225,7 +227,8 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     selector: { select: { mode: "dropdown", options: values.map((value) => ({ value, label: t(`editor.${name}_${value}`) })) } }
   });
   const toggle = (name: (typeof SWITCHES)[number]) => ({ name, selector: { boolean: {} } });
-  const degrees = (name: string) => ({ name, selector: { number: { min: 0, max: 100, step: 0.5, mode: "box", unit_of_measurement: "°C" } } });
+  // A temperature as a number, or the entity that reports it: a text field takes both.
+  const degrees = (name: string) => ({ name, selector: { text: {} } });
   const text = (name: string) => ({ name, selector: { text: {} } });
   const grid = (schema: unknown[]) => ({ type: "grid", schema });
 
@@ -323,7 +326,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance"];
+  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "usable_max", "eco", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance"];
 
   return {
     schema,
