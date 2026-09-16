@@ -16,7 +16,7 @@ Until the card is in HACS, add this repository as a custom repository of type *D
 
 Only `entities.mode` is required. The card reads the rest of what it can out of what is already there: a circuit named "FBH EG" gets the underfloor symbol and the mark EG, "Heizkörper OG" a radiator and OG, and a buffer measures itself against the flow of the warmest circuit it is feeding instead of a fixed number that is wrong in September and wrong again in January.
 
-The visual editor offers every choice as a short list of what it looks like, never as a switch: most choices only show in one situation — while the heat pump runs, while it stands, while the buffer carries the house — and each list's helper says which. Circuits, stores, extra figures and state words are set in YAML.
+The visual editor offers a choice with three or more looks as a short list of what each looks like, and one with two as a switch. Most choices only show in one situation — while the heat pump runs, while it stands, while the buffer carries the house — and the helper under each says which. Circuits, stores, extra figures and state words are set in YAML.
 
 ```yaml
 type: custom:heat-origin-card
@@ -92,21 +92,20 @@ flow:
 | `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts and draws no trend. |
 | `flow.layout` | `columns` | `columns`: the heat pump heads the left column with hot water under it, the heating group — the buffer, then its circuits — owns the right one. `split`: stores left, circuits right, the heat pump between them. |
 | `flow.centre` | `heat` | What the circle reads while the heat pump runs: `power`, or `both` — then the performance factor moves into the foot. |
-| `flow.ring` | `both` | The day's dial and, while it runs, the shares of ambient heat and electricity; `clock` for the day alone, `shares` for the shares alone. Standing still, `both` and `clock` look the same. |
-| `flow.dial` | `sun` | The hours of daylight as an arc outside the dial; `plain` leaves them off. |
+| `flow.ring` | `sun` | The day's dial with the hours of daylight arcing over it; `plain` without them; `shares` no dial. While it runs, the shares of ambient heat and electricity ring the circle in any case. |
 | `flow.labels` | `short` | Symbol with the storey under it; `icon` for the symbol alone, `name` for the name. |
 | `flow.circuit` | `room` | The room with its target, flow and return beside them; `room_plain` leaves the target off; `flow` puts the flow first. |
-| `flow.resting` | `curve` | While a circuit takes no heat: its flow and what the heating curve wants of it; `flow` leaves the curve off. |
+| `flow.curve` | `true` | While a circuit takes no heat, what the heating curve wants of it, as the flow's target in place of the return. |
 | `flow.gauge` | `bar` | The store's level as a bar in the box's foot; `box` fills the whole box. |
-| `flow.scale` | `show` | Empty and full written under the level; `hide` leaves them off. |
+| `flow.scale` | `true` | Empty and full written under the level. |
 | `flow.trend` | `rate` | Which way a store is going, from the fall the card measures anyway: arrow with the K/h where it fits, `arrow` alone, or `none`. |
-| `flow.rest` | `colour` | A resting box keeps its symbol in its own colour; `grey` greys it out with its state. |
+| `flow.rest_colour` | `true` | A resting box keeps its symbol in its own colour instead of greying out with its state. |
 | `flow.buffer_line` | `range` | While the buffer carries the circuits alone: the line with how long it can keep going; `line` alone; `named` also writes "from the buffer" in the circuit's box; `none` draws nothing. |
 | `flow.foot` | `full` | The line under the drawing; `no_spread` leaves flow, return and spread out, `drive` keeps only electricity and ambient heat, `none` nothing. |
-| `flow.idle_foot` | `balance` | While the heat pump stands: the day's starts, running time and performance factor; `last` names the last run instead. |
+| `flow.balance` | `true` | While the heat pump stands: the day's starts, running time and performance factor in place of the last run, which the circle tells anyway. |
 | `flow.extras` | | Further figures in the foot, `{ entity, name, running_only }`; `running_only` hides a figure at rest, e.g. hot gas. |
 
-The switches earlier versions wrote — `spread`, `sun`, `target`, `curve`, `bypass`, `range`, `origin`, `balance`, `rest_colour`, `detail`, and the `sections` and `day` blocks — are still read and land on the word they meant; the editor writes the words from then on.
+What earlier versions wrote — `spread`, `sun`, `target`, `bypass`, `range`, `origin`, `detail`, the `sections` and `day` blocks, and 1.0.0's `resting`, `dial`, `idle_foot` and `rest` — is still read and lands on what it meant; the editor writes the current keys from then on.
 
 ### State words
 

@@ -111,7 +111,7 @@ const COL_W = 171;
 const BOX_H_COL = 74;
 const COL_R = 196;
 const COL_GAP = 8;
-const R_COL_PUMP = 44;
+const R_COL_PUMP = 48;
 
 type Shares = Partial<Record<ElectricSource, number>>;
 
@@ -629,7 +629,7 @@ export class HeatOriginCard extends LitElement {
 
       // A return line at rest is a number with nothing behind it. What the heating curve
       // is asking for is the one of the two that still says something.
-      const curveT = !active && config.flow.resting === "curve" ? this._num(circuit.curve_flow) : undefined;
+      const curveT = !active && config.flow.curve ? this._num(circuit.curve_flow) : undefined;
 
       // The room is what the circuit is for; flow and return are how it gets there.
       if (face !== "flow" && room !== undefined) {
@@ -763,7 +763,7 @@ export class HeatOriginCard extends LitElement {
     if (!running) {
       const today = this._days()?.at(-1);
       if (today) {
-        if (config.flow.idle_foot === "balance") {
+        if (config.flow.balance) {
           // The middle of the circle already says when the last run was and how long it
           // lasted. Saying it twice costs the line that could carry the day instead.
           const minutes = (["heating", "hot_water", "cooling", "defrost"] as const)
@@ -867,7 +867,7 @@ export class HeatOriginCard extends LitElement {
     const rightCount = bufIx.length + circuits.length;
     const H = Math.max(rightY(rightCount - 1) + BOX_H_COL, leftY(hotIx.length - 1) + BOX_H_COL, cy + reach + 6) + 6;
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale === "show", restColour: config.flow.rest === "colour" };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale, restColour: config.flow.rest_colour };
     const parts: unknown[] = [];
 
     // The pump to hot water: out of the ring at half past seven, clear of the moon.
@@ -917,7 +917,7 @@ export class HeatOriginCard extends LitElement {
 
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
     parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_COL_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
-    if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_COL_PUMP, heat, electric, shares));
+    if (running && hasBoth) parts.push(this._ring(cx, cy, R_COL_PUMP, heat, electric, shares));
     parts.push(this._centre(cx, cy, R_COL_PUMP, heat, electric, live.cop, running, mode));
 
     return html`
@@ -959,7 +959,7 @@ export class HeatOriginCard extends LitElement {
 
     if (this._narrow) return this._renderFlowList(stores.concat(circuits), running);
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale === "show", restColour: config.flow.rest === "colour" };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale, restColour: config.flow.rest_colour };
     const parts: unknown[] = [];
 
     stores.forEach((model, i) => {
@@ -1005,7 +1005,7 @@ export class HeatOriginCard extends LitElement {
     if (showClock) parts.push(this._dial(cx, cy, rRing, days));
 
     parts.push(svg`<circle cx=${cx} cy=${cy} r=${R_PUMP} fill=${PALETTE.surface} stroke=${PALETTE.hairline} stroke-width="2"/>`);
-    if (running && hasBoth && config.flow.ring !== "clock") parts.push(this._ring(cx, cy, R_PUMP, heat, electric, shares));
+    if (running && hasBoth) parts.push(this._ring(cx, cy, R_PUMP, heat, electric, shares));
     parts.push(this._centre(cx, cy, R_PUMP, heat, electric, live.cop, running, mode));
 
     return html`
@@ -1031,7 +1031,7 @@ export class HeatOriginCard extends LitElement {
     return dial(cx, cy, r, {
       segments,
       now: now.getHours() + now.getMinutes() / 60,
-      sun: config.flow.dial === "sun" ? this._daylight() : undefined,
+      sun: config.flow.ring === "sun" ? this._daylight() : undefined,
       tone: PALETTE
     });
   }

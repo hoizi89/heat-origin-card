@@ -25,28 +25,18 @@ export type CircuitKind = "heating" | "circulation";
 export type LabelStyle = "short" | "icon" | "name";
 /** Which face a heating circuit shows; `room_plain` is the room without its target. */
 export type CircuitFace = "room" | "room_plain" | "flow";
-/** What a resting circuit writes where its return would stand. */
-export type RestingFace = "curve" | "flow";
 /** Where a store's level is drawn. */
 export type GaugeStyle = "bar" | "box";
-/** Whether the level's two ends are written under it. */
-export type ScaleStyle = "show" | "hide";
 /** Which way a store is going, and whether the rate stands beside the arrow. */
 export type TrendStyle = "rate" | "arrow" | "none";
-/** What rings the heat pump. */
-export type RingStyle = "both" | "clock" | "shares";
-/** Whether the day's dial carries the hours of daylight. */
-export type DialStyle = "sun" | "plain";
+/** What rings the heat pump: the day's dial with or without the hours of daylight, or no dial at all. */
+export type RingStyle = "sun" | "plain" | "shares";
 /** What the middle of the heat pump reads. */
 export type CentreValue = "heat" | "power" | "both";
 /** How much of the foot line is kept. */
 export type FootStyle = "full" | "no_spread" | "drive" | "none";
-/** What the foot says while the heat pump stands. */
-export type IdleFoot = "balance" | "last";
 /** What is drawn while a buffer carries the circuits on its own. */
 export type BufferLine = "range" | "line" | "named" | "none";
-/** Whether a resting box keeps its colour. */
-export type RestStyle = "colour" | "grey";
 /** Where the ambient heat comes from. */
 export type HeatSource = "air" | "ground" | "water";
 /** Where the electricity comes from right now. */
@@ -162,10 +152,10 @@ export interface ExtraFigure {
 }
 
 /**
- * Every choice here is one word out of a short list, never a switch: most of them only
- * show in one situation — while the heat pump runs, while it stands, while the buffer
- * carries the house — and a switch that reads "on" for something not on the screen right
- * now reads as broken. A list can say what each choice looks like.
+ * A choice with three or more looks is a word from a short list; one with two is a
+ * switch. Most of them only show in one situation — while the heat pump runs, while it
+ * stands, while the buffer carries the house — so the editor says under each one when
+ * that is.
  */
 export interface FlowOptions {
   /**
@@ -182,49 +172,46 @@ export interface FlowOptions {
   labels?: LabelStyle;
   /** The circuit's face: the room with its target, the room alone, or the flow itself. */
   circuit?: CircuitFace;
-  /** What a resting circuit writes in place of its return: the heating curve's ask, or nothing. */
-  resting?: RestingFace;
+  /** While a circuit takes no heat: what the heating curve asks of it, in place of its return. */
+  curve?: boolean;
   /** The store's level as a bar in the box's foot, or as the box's own filling. */
   gauge?: GaugeStyle;
-  /** The level's two ends, written under it. */
-  scale?: ScaleStyle;
+  /** The level's two ends, written under it. `show`/`hide` from 1.0.0 still read. */
+  scale?: boolean | "show" | "hide";
   /** Which way a store is going, from the fall the card measures anyway. `true`/`false` from earlier versions still read. */
   trend?: TrendStyle | boolean;
-  /** What rings the heat pump: the day's dial, the shares of the heat while it runs, or both. */
-  ring?: RingStyle;
-  /** The hours of daylight as an arc outside the dial. */
-  dial?: DialStyle;
+  /** What rings the heat pump: the day's dial with the hours of daylight, without them, or none. The shares of the heat always ring it while it runs. `both`/`clock` from earlier versions still read. */
+  ring?: RingStyle | "both" | "clock";
   /** What the middle of the circle reads while the heat pump runs. */
   centre?: CentreValue;
   /** How much of the line under the drawing is kept. */
   foot?: FootStyle;
-  /** While the heat pump stands: the day's starts, running time and performance factor, or the last run. */
-  idle_foot?: IdleFoot;
-  /** While a buffer carries the circuits on its own: the line with its remaining time, the line alone, both plus "from buffer" in the circuit's box, or nothing. */
+  /** While the heat pump stands: the day's starts, running time and performance factor in place of the last run. */
+  balance?: boolean;
+  /** While a buffer carries the circuits alone: the line with its remaining time, the line alone, both plus "from buffer" in the circuit's box, or nothing. */
   buffer_line?: BufferLine;
-  /** A resting box keeps its symbol in its own colour, or greys out with its state. */
-  rest?: RestStyle;
+  /** A resting box keeps its symbol in its own colour instead of greying out with its state. */
+  rest_colour?: boolean;
 
   /** @deprecated Read as `foot: no_spread`. */
   spread?: boolean;
-  /** @deprecated Read as `dial`. */
+  /** @deprecated Read as `ring: plain`. */
   sun?: boolean;
   /** @deprecated Read as `circuit: room_plain`. */
   target?: boolean;
-  /** @deprecated Read as `resting`. */
-  curve?: boolean;
   /** @deprecated Read as `buffer_line`. */
   bypass?: boolean;
   /** @deprecated Read as `buffer_line`. */
   range?: boolean;
   /** @deprecated Read as `buffer_line: named`. */
   origin?: boolean;
-  /** @deprecated Read as `idle_foot`. */
-  balance?: boolean;
-  /** @deprecated Read as `rest`. */
-  rest_colour?: boolean;
   /** @deprecated `low` once set labels, scale and foot together; each is its own choice now. */
   detail?: "low" | "normal" | "high";
+  /** @deprecated 1.0.0 words for `curve`, `ring`, `balance` and `rest_colour`; each reads as the switch it meant. */
+  resting?: "curve" | "flow";
+  dial?: "sun" | "plain";
+  idle_foot?: "balance" | "last";
+  rest?: "colour" | "grey";
 }
 
 export interface HeatOriginCardConfig {
@@ -250,17 +237,16 @@ export interface ResolvedFlow {
   extras: ExtraFigure[];
   labels: LabelStyle;
   circuit: CircuitFace;
-  resting: RestingFace;
+  curve: boolean;
   gauge: GaugeStyle;
-  scale: ScaleStyle;
+  scale: boolean;
   trend: TrendStyle;
   ring: RingStyle;
-  dial: DialStyle;
   centre: CentreValue;
   foot: FootStyle;
-  idle_foot: IdleFoot;
+  balance: boolean;
   buffer_line: BufferLine;
-  rest: RestStyle;
+  rest_colour: boolean;
 }
 
 export interface ResolvedConfig {

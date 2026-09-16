@@ -25,8 +25,8 @@ describe("configuration", () => {
   it("gives every choice a word, and a nonsense word falls back", () => {
     const flow = resolveConfig(bare).flow;
     expect(flow).toMatchObject({
-      layout: "columns", labels: "short", circuit: "room", resting: "curve", gauge: "bar", scale: "show", trend: "rate",
-      ring: "both", dial: "sun", centre: "heat", foot: "full", idle_foot: "balance", buffer_line: "range", rest: "colour"
+      layout: "columns", labels: "short", circuit: "room", curve: true, gauge: "bar", scale: true, trend: "rate",
+      ring: "sun", centre: "heat", foot: "full", balance: true, buffer_line: "range", rest_colour: true
     });
     expect(resolveConfig({ ...bare, flow: { gauge: "tank" as never, trend: "maybe" as never } }).flow).toMatchObject({ gauge: "bar", trend: "rate" });
   });
@@ -34,20 +34,23 @@ describe("configuration", () => {
   it("still reads the switches earlier versions wrote, each as the word it meant", () => {
     const old = resolveConfig({
       ...bare,
-      flow: { spread: false, sun: false, target: false, curve: false, range: false, balance: false, rest_colour: false, trend: false }
+      flow: { spread: false, sun: false, target: false, range: false, trend: false }
     }).flow;
-    expect(old).toMatchObject({
-      foot: "no_spread", dial: "plain", circuit: "room_plain", resting: "flow", buffer_line: "line", idle_foot: "last", rest: "grey", trend: "none"
-    });
+    expect(old).toMatchObject({ foot: "no_spread", ring: "plain", circuit: "room_plain", buffer_line: "line", trend: "none" });
+    // 1.0.0 wrote four of the switches as words for a fortnight.
+    const words = resolveConfig({ ...bare, flow: { resting: "flow", idle_foot: "last", rest: "grey", scale: "hide", ring: "clock", dial: "plain" } }).flow;
+    expect(words).toMatchObject({ curve: false, balance: false, rest_colour: false, scale: false, ring: "plain" });
+    expect(resolveConfig({ ...bare, flow: { ring: "both" } }).flow.ring).toBe("sun");
     expect(resolveConfig({ ...bare, flow: { bypass: false } }).flow.buffer_line).toBe("none");
     expect(resolveConfig({ ...bare, flow: { origin: true } }).flow.buffer_line).toBe("named");
     expect(resolveConfig({ ...bare, flow: { trend: true } }).flow.trend).toBe("rate");
     // 0.9 wrote the foot in full with the spread switched off beside it; that is a foot without the spread.
     expect(resolveConfig({ ...bare, flow: { foot: "full", spread: false } }).flow.foot).toBe("no_spread");
     // The sparing detail step once set three things at once.
-    expect(resolveConfig({ ...bare, flow: { detail: "low" } }).flow).toMatchObject({ labels: "icon", scale: "hide", foot: "drive" });
-    // A word written beside an old switch wins.
-    expect(resolveConfig({ ...bare, flow: { sun: false, dial: "sun" } }).flow.dial).toBe("sun");
+    expect(resolveConfig({ ...bare, flow: { detail: "low" } }).flow).toMatchObject({ labels: "icon", scale: false, foot: "drive" });
+    // The current key written beside an old one wins.
+    expect(resolveConfig({ ...bare, flow: { sun: false, ring: "sun" } }).flow.ring).toBe("sun");
+    expect(resolveConfig({ ...bare, flow: { resting: "flow", curve: true } }).flow.curve).toBe(true);
   });
 
   it("shows the editor every choice at the word the card uses, and drops what earlier versions wrote", () => {
@@ -57,8 +60,8 @@ describe("configuration", () => {
       day: { days: 2 },
       flow: { sun: false, detail: "low", extras: [{ entity: "sensor.y" }] }
     } as never);
-    // Every list reads what is on the screen: the old switch became its word, the old dial its three words.
-    expect(data.flow).toMatchObject({ dial: "plain", labels: "icon", scale: "hide", foot: "drive", gauge: "bar" });
+    // Every list and switch reads what is on the screen: the old switch became its word, the old dial its three keys.
+    expect(data.flow).toMatchObject({ ring: "plain", labels: "icon", scale: false, foot: "drive", gauge: "bar", curve: true });
     expect(data.font).toBe("system");
     expect(data.shape).toBe("standard");
     // The switches and the sections that no longer exist do not come back to be written again.
@@ -72,12 +75,12 @@ describe("configuration", () => {
     expect(data.modes).toBeUndefined();
   });
 
-  it("offers every choice as a list, never a switch, and says when each one shows", () => {
+  it("offers three or more looks as a list, two as a switch, and says when each one shows", () => {
     const form = getConfigForm("de");
     const flat = JSON.stringify(form.schema);
-    expect(flat).not.toContain('"boolean"');
+    expect(flat.match(/"boolean"/g)).toHaveLength(4);
     expect(form.computeLabel({ name: "ring" })).toBe("Um den Kreis");
-    expect(form.computeHelper({ name: "ring" })).toContain("solange sie läuft");
+    expect(form.computeHelper({ name: "curve" })).toContain("curve_flow");
     expect(form.computeHelper({ name: "buffer_line" })).toContain("steht");
     expect(form.computeHelper({ name: "scale" })).toContain("usable_min");
     expect(form.computeHelper({ name: "gauge" })).toBeUndefined();

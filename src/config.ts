@@ -56,46 +56,45 @@ export const CHOICES = {
   layout: ["columns", "split"],
   labels: ["short", "icon", "name"],
   circuit: ["room", "room_plain", "flow"],
-  resting: ["curve", "flow"],
   gauge: ["bar", "box"],
-  scale: ["show", "hide"],
   trend: ["rate", "arrow", "none"],
-  ring: ["both", "clock", "shares"],
-  dial: ["sun", "plain"],
+  ring: ["sun", "plain", "shares"],
   centre: ["heat", "power", "both"],
   foot: ["full", "no_spread", "drive", "none"],
-  idle_foot: ["balance", "last"],
-  buffer_line: ["range", "line", "named", "none"],
-  rest: ["colour", "grey"]
+  buffer_line: ["range", "line", "named", "none"]
 } as const;
 
+/** The switches: two looks each, on by default. */
+export const SWITCHES = ["curve", "scale", "balance", "rest_colour"] as const;
+
 /**
- * Every choice is one word. The switches earlier versions wrote are read once more
- * here and land on the word they meant, so an older YAML keeps its look; the editor
- * writes only the words from now on.
+ * What earlier versions wrote is read once more here and lands on what it meant, so an
+ * older YAML keeps its look; the editor writes the current keys from then on.
  */
 function resolveFlow(flow: FlowOptions): ResolvedFlow {
   const low = flow.detail === "low";
   const legacyBuffer = flow.bypass === false ? "none" : flow.origin ? "named" : flow.range === false ? "line" : "range";
   const legacyFoot = low ? "drive" : flow.spread === false ? "no_spread" : "full";
   const legacyTrend = typeof flow.trend === "boolean" ? (flow.trend ? "rate" : "none") : undefined;
+  // 1.0.0 had the dial's two ends as `ring: both|clock` plus `dial`; 0.9 as `sun`.
+  const legacyRing = flow.ring === "shares" ? "shares" : flow.dial === "plain" || flow.sun === false ? "plain" : "sun";
+  const on = (value: boolean | undefined, word: string | undefined, off: string) => value ?? (word === undefined ? true : word !== off);
   return {
     layout: oneOf(flow.layout, CHOICES.layout, "columns"),
     extras: flow.extras ?? [],
     labels: oneOf(flow.labels, CHOICES.labels, low ? "icon" : "short"),
     circuit: oneOf(flow.circuit, CHOICES.circuit, flow.target === false ? "room_plain" : "room"),
-    resting: oneOf(flow.resting, CHOICES.resting, flow.curve === false ? "flow" : "curve"),
+    curve: on(flow.curve, flow.resting, "flow"),
     gauge: oneOf(flow.gauge, CHOICES.gauge, "bar"),
-    scale: oneOf(flow.scale, CHOICES.scale, low ? "hide" : "show"),
+    scale: typeof flow.scale === "boolean" ? flow.scale : flow.scale === undefined ? !low : flow.scale !== "hide",
     trend: oneOf(flow.trend, CHOICES.trend, legacyTrend ?? "rate"),
-    ring: oneOf(flow.ring, CHOICES.ring, "both"),
-    dial: oneOf(flow.dial, CHOICES.dial, flow.sun === false ? "plain" : "sun"),
+    ring: oneOf(flow.ring, CHOICES.ring, legacyRing),
     centre: oneOf(flow.centre, CHOICES.centre, "heat"),
     // A foot asked for in full with the spread switched off, as 0.9 wrote it, is a foot without the spread.
     foot: flow.foot === "full" && flow.spread === false ? "no_spread" : oneOf(flow.foot, CHOICES.foot, legacyFoot),
-    idle_foot: oneOf(flow.idle_foot, CHOICES.idle_foot, flow.balance === false ? "last" : "balance"),
+    balance: on(flow.balance, flow.idle_foot, "last"),
     buffer_line: oneOf(flow.buffer_line, CHOICES.buffer_line, legacyBuffer),
-    rest: oneOf(flow.rest, CHOICES.rest, flow.rest_colour === false ? "grey" : "colour")
+    rest_colour: on(flow.rest_colour, flow.rest, "grey")
   };
 }
 
@@ -116,16 +115,16 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   };
 }
 
-const LEGACY_FLOW_KEYS = ["spread", "sun", "target", "curve", "bypass", "range", "origin", "balance", "rest_colour", "detail", "circuit_details"] as const;
+const LEGACY_FLOW_KEYS = ["spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
 const LEGACY_CARD_KEYS = ["sections", "day"] as const;
 
 /**
- * What the editor shows: every list at the word the card really uses, so what is on the
- * screen and what is in the form agree. Home Assistant writes back every field the form
- * shows, so opening the editor once turns the defaults into YAML — and since the words
- * are exactly what the card does, that YAML is a true record rather than a frozen guess.
- * Switches and sections from earlier versions are translated and dropped on the way,
- * and lists (circuits, stores, extras, state words) stay as written.
+ * What the editor shows: every list and switch at what the card really uses, so what is
+ * on the screen and what is in the form agree. Home Assistant writes back every field
+ * the form shows, so opening the editor once turns the defaults into YAML — and since
+ * they are exactly what the card does, that YAML is a true record rather than a frozen
+ * guess. Keys from earlier versions are translated and dropped on the way, and lists
+ * (circuits, stores, extras, state words) stay as written.
  */
 export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
   const resolved = resolveConfig(config);
@@ -161,11 +160,14 @@ export function getConfigForm(locale: string) {
     name,
     selector: { select: { mode: "dropdown", options: values.map((value) => ({ value, label: t(`editor.${name}_${value}`) })) } }
   });
+  const toggle = (name: (typeof SWITCHES)[number]) => ({ name, selector: { boolean: {} } });
 
   const schema = [
     { name: "title", selector: { text: {} } },
-    { type: "grid", schema: [choice("layout"), words("shape", ["standard", "compact"])] },
-    { type: "grid", schema: [words("font", ["system", "mono"]), words("source", ["air", "ground", "water"])] },
+    // The layout's words are long; they get the row to themselves.
+    choice("layout"),
+    { type: "grid", schema: [words("shape", ["standard", "compact"]), words("font", ["system", "mono"])] },
+    words("source", ["air", "ground", "water"]),
     {
       type: "expandable",
       name: "entities",
@@ -174,51 +176,33 @@ export function getConfigForm(locale: string) {
         { name: "mode", required: true, selector: sensor },
         {
           type: "grid",
-          schema: ["heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop"].map((name) => ({
-            name,
-            selector: sensor
-          }))
-        }
-      ]
-    },
-    {
-      type: "expandable",
-      name: "entities",
-      title: t("editor.energy"),
-      schema: [
-        {
-          type: "grid",
           schema: [
-            "heating_heat_today",
-            "heating_electric_today",
-            "hot_water_heat_today",
-            "hot_water_electric_today",
-            "heat_today",
-            "electric_today"
+            "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop",
+            "heating_heat_today", "heating_electric_today", "hot_water_heat_today", "hot_water_electric_today", "heat_today", "electric_today"
           ].map((name) => ({ name, selector: sensor }))
         }
       ]
     },
-    // Three lists, one per part of the drawing. Each list says what its choice looks like,
-    // and its helper says when that choice is on the screen at all.
-    { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring"), choice("dial")] },
+    // One group per part of the drawing. A choice with three or more looks is a list,
+    // one with two a switch; the helper under each says when it is on the screen at all.
+    { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
     {
       type: "expandable",
       name: "flow",
       title: t("editor.group_boxes"),
-      schema: [choice("labels"), choice("circuit"), choice("resting"), choice("gauge"), choice("scale"), choice("trend"), choice("rest")]
+      schema: [choice("labels"), choice("circuit"), toggle("curve"), choice("gauge"), toggle("scale"), choice("trend"), toggle("rest_colour")]
     },
-    { type: "expandable", name: "flow", title: t("editor.group_lines"), schema: [choice("buffer_line"), choice("foot"), choice("idle_foot")] }
+    { type: "expandable", name: "flow", title: t("editor.group_lines"), schema: [choice("buffer_line"), choice("foot"), toggle("balance")] }
   ];
 
   const labelled = [
     "title", "layout", "shape", "font", "source", "mode", "heat_power", "electric_power", "return", "volume_flow", "outdoor", "solar",
     "house_power", "grid_power", "battery_power", "cop", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
-    "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "dial", "labels", "circuit", "resting", "gauge",
-    "scale", "trend", "rest", "buffer_line", "foot", "idle_foot"
+    "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
+    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "circuit", "resting", "scale", "trend", "ring", "centre", "buffer_line", "idle_foot"];
+  const helped = ["mode", "circuit", "curve", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
 
   return {
     schema,

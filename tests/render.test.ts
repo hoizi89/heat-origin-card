@@ -106,18 +106,17 @@ describe("the flow", () => {
     expect(t).toContain("+2,0 K");
   });
 
-  it("asks the heating curve what it wants while a circuit rests, instead of its return", async () => {
+  it("asks the heating curve what it wants while a circuit rests, as the flow's target, instead of its return", async () => {
     const { root } = await mount(FULL_CONFIG);
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
-    expect(text(eg as Element)).toContain("Kurve");
-    expect(text(eg as Element)).toContain("30,6°");
+    expect(text(eg as Element)).toContain("30,6° Soll");
   });
 
-  it("leaves both out when asked for the plain room and the flow alone", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain", resting: "flow" } });
+  it("leaves both out when asked for the plain room and no curve", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain", curve: false } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
-    expect(text(eg as Element)).not.toContain("Soll 22,5°");
-    expect(text(eg as Element)).not.toContain("Kurve");
+    expect(text(eg as Element)).not.toContain("Soll");
+    expect(text(eg as Element)).not.toContain("30,6°");
   });
 
   it("gives the day's figures in place of a last run the circle already tells", async () => {
@@ -127,7 +126,7 @@ describe("the flow", () => {
     expect(foot).toContain("3 Starts");
     expect(foot).not.toContain("zuletzt");
     // Asked for the last run, the old pair comes back.
-    const old = await mount({ ...FULL_CONFIG, flow: { idle_foot: "last" } }, idle());
+    const old = await mount({ ...FULL_CONFIG, flow: { balance: false } }, idle());
     expect(text(old.root.querySelector(".section .foot") as Element)).toContain("zuletzt");
   });
 
