@@ -97,6 +97,40 @@ describe("the flow", () => {
     expect(Number(rect?.getAttribute("width"))).toBeGreaterThan(160);
   });
 
+  it("turns a room reading into an answer by naming the room that was asked for", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
+    const t = text(eg as Element);
+    // 24,5 in a room asked to be 22,5 is two kelvin too warm — which is why it rests.
+    expect(t).toContain("Soll 22,5°");
+    expect(t).toContain("+2,0 K");
+  });
+
+  it("asks the heating curve what it wants while a circuit rests, instead of its return", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
+    expect(text(eg as Element)).toContain("Kurve");
+    expect(text(eg as Element)).toContain("30,6°");
+  });
+
+  it("leaves both out when they are switched off", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { target: false, curve: false } });
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
+    expect(text(eg as Element)).not.toContain("Soll 22,5°");
+    expect(text(eg as Element)).not.toContain("Kurve");
+  });
+
+  it("gives the day's figures in place of a last run the circle already tells", async () => {
+    const { root } = await mount(FULL_CONFIG, idle());
+    const foot = text(root.querySelector(".section .foot") as Element);
+    expect(foot).toContain("Heute");
+    expect(foot).toContain("3 Starts");
+    expect(foot).not.toContain("zuletzt");
+    // Switched off, the old pair comes back.
+    const old = await mount({ ...FULL_CONFIG, flow: { balance: false } }, idle());
+    expect(text(old.root.querySelector(".section .foot") as Element)).toContain("zuletzt");
+  });
+
   it("writes the circulation into the hot water box where the box is wide enough", async () => {
     const { root } = await mount(FULL_CONFIG);
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));

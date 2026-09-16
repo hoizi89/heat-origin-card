@@ -40,8 +40,16 @@ export interface BoxModel {
     marks: Array<{ at: number; name: string }>;
     scale?: [string, string];
   };
-  /** A circuit: flow up, return down. */
-  pair?: { up: string; down?: string; note?: string; spread?: string };
+  /**
+   * A circuit: the flow above, and below it either the return — which matters while
+   * heat is moving — or what the heating curve is asking for, which is the only one of
+   * the two that says anything while the circuit rests.
+   */
+  pair?: { up: string; down?: string; curve?: string; curveLabel?: string; note?: string; spread?: string };
+  /** The room this circuit was asked for, and how far it is from it. */
+  target?: { text: string; off: string; tone: string };
+  /** Which way a store is going, from its own measured fall. */
+  trend?: { up: boolean; rate?: string };
   /** A circuit shown by its flow instead of its room: one line of detail. */
   sub?: string;
   /** The circulation drawing off this store: its temperature, and whether it runs. */
@@ -72,9 +80,13 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   labels: "short" | "icon" | "name";
   gauge: "bar" | "box";
   scale: boolean;
+  /** A resting box keeps its symbol in its own colour, so the card keeps its order. */
+  restColour: boolean;
 }, uid: number, click?: () => void): SVGTemplateResult {
   const S = scaleOf(h);
   const tone = m.on ? m.tone : t.muted;
+  // Only the state greys out. What a box *is* does not change when it stops working.
+  const mark = m.on || style.restColour ? m.tone : t.muted;
   const fill = m.on ? `color-mix(in srgb, ${m.tone} 15%, ${t.surface})` : t.surface;
   const parts: unknown[] = [
     svg`<rect x=${x} y=${y} width=${w} height=${h} rx=${R_BOX} fill=${fill} stroke=${m.on ? m.tone : t.hairline} stroke-width="1.5"/>`
@@ -106,10 +118,10 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       </g>`);
   }
 
-  parts.push(icon(m.icon, x + 7, y + S.icon, tone));
+  parts.push(icon(m.icon, x + 7, y + S.icon, mark));
   if (style.labels === "short" && m.short) {
     parts.push(svg`<text x=${x + 15} y=${y + S.short} text-anchor="middle" font-size=${S.micro} font-weight="700"
-      letter-spacing="0.06em" fill=${tone}>${m.short}</text>`);
+      letter-spacing="0.06em" fill=${mark}>${m.short}</text>`);
   }
 
   const label = (text: string, xx: number, anchor: string, col: string) =>
@@ -123,11 +135,27 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       fill=${m.level && m.on ? t.ink : t.muted}>${m.valueRight}</text>`);
   }
 
+  // The card measures a store's fall for its forecast anyway; the arrow says which way
+  // it is going for the price of seven pixels. The rate follows only where it fits,
+  // because the direction is the part that is read at a glance.
+  let afterValue = tx + m.value.length * S.figure * 0.56;
+  if (m.trend) {
+    const ax = afterValue + 11;
+    parts.push(arrow(ax, y + S.val - 4, m.trend.up, m.trend.up ? m.tone : t.muted));
+    afterValue = ax + 5;
+    const room = rx - afterValue - (m.valueRight === undefined ? 0 : m.valueRight.length * S.small * 0.56);
+    const wide = m.loop ? 0 : 1;
+    if (m.trend.rate && room > m.trend.rate.length * S.micro * 0.56 + 40 * wide) {
+      parts.push(svg`<text x=${afterValue + 4} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.trend.rate}</text>`);
+      afterValue += 4 + m.trend.rate.length * S.micro * 0.56;
+    }
+  }
+
   // Between the temperature and the usable heat is the widest free space in a wide box,
   // and the circulation is the figure that changes most often. It goes there.
   if (m.loop && w >= 150) {
     const lt = m.loop.on ? m.tone : t.muted;
-    const leftEnd = tx + m.value.length * S.figure * 0.56;
+    const leftEnd = afterValue;
     const rightStart = m.valueRight === undefined ? rx : rx - m.valueRight.length * S.small * 0.56;
     const width = 13 + m.loop.text.length * S.small * 0.56;
     const lx = (leftEnd + rightStart) / 2 - width / 2;
@@ -142,11 +170,23 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     const ax = rx - Math.max(28, m.pair.up.length * S.small * 0.56 + 11);
     parts.push(arrow(ax, y + S.aUp, true, tone));
     parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
-    if (m.pair.down) {
+    if (m.pair.curve) {
+      // At rest a return line is a number with nothing behind it. What the curve wants
+      // is the figure that still means something, so it takes that place and says so.
+      parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.curve}</text>`);
+      parts.push(svg`<text x=${rx - m.pair.curve.length * S.small * 0.56 - 6} y=${y + S.down} text-anchor="end"
+        font-size=${S.micro} fill=${t.muted}>${m.pair.curveLabel ?? ""}</text>`);
+    } else if (m.pair.down) {
       parts.push(arrow(ax, y + S.aDown, false, t.muted));
       parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.down}</text>`);
     }
-    if (m.pair.note) {
+    // The room a circuit was asked for turns its own figure from a reading into an
+    // answer: twenty-five degrees is only too warm once something says what was wanted.
+    if (m.target) {
+      parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.target.text}</text>`);
+      parts.push(svg`<text x=${tx + m.target.text.length * S.micro * 0.56 + 7} y=${y + S.note}
+        font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
+    } else if (m.pair.note) {
       parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} letter-spacing="0.05em" fill=${tone} opacity="0.85">${m.pair.note}</text>`);
     }
     if (m.pair.spread) {

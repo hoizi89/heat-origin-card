@@ -83,6 +83,8 @@ flow:
 | `entities.cop_heating_month` … `cop_hot_water_year` | | Compared with today's factor; the year stands in where no month is given. |
 | `circuits[].active` | HEATING, ECO, COOLING, … | Words of the circuit's state that mean it takes heat. |
 | `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store and gives nothing back, so it belongs to that store rather than to a circuit of its own: in a wide box it stands in the middle of the scale row, lit while the pump runs. A circuit named or marked as circulation is moved to the hot water store. |
+| `circuits[].target_room` | | The room the circuit was asked for. A room reading is neither good nor bad until something says what was wanted there, so with this the figure becomes an answer and its distance from the target is written under it. |
+| `circuits[].curve_flow` | | What the heating curve is asking of the circuit. While a circuit rests its return line is a number with nothing behind it, so this takes that place instead. |
 | `circuits[].pump` | | A switch or binary sensor; on means the circuit runs. |
 | `circuits[].temperature` | | One temperature, for loops without flow and return. |
 | `stores[].volume` | | Litres; shows the usable heat in kWh. |
@@ -99,6 +101,11 @@ flow:
 | `flow.bypass` | `true` | Draw the buffer feeding the circuits. |
 | `flow.range` | `true` | How long it can keep doing so, on the line itself. |
 | `flow.origin` | off | Name the buffer in the circuit's box as well. |
+| `flow.target` | `true` | The room a circuit was asked for, under the room it has. |
+| `flow.curve` | `true` | What the heating curve wants of a resting circuit, in place of its return. |
+| `flow.trend` | `true` | Which way a store is going — from the fall the card measures for its forecast anyway, so it costs nothing new. |
+| `flow.balance` | `true` | The day's starts, running time and performance factor, in place of the last run the middle of the circle already tells. |
+| `flow.rest_colour` | `true` | A resting box keeps its symbol in its own colour. Only the state greys out: what a box *is* does not change when it stops working. |
 | `flow.foot` | `full` | `drive` keeps only electricity and ambient heat, `none` nothing. |
 | `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts. |
 | `circuits[].icon`, `stores[].icon` | guessed | `floor`, `radiator`, `fancoil`, `pipe`, `water`, `buffer`, `loop`. |

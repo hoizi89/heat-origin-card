@@ -81,6 +81,8 @@ function mark(kind: "bolt" | "air" | "drop", tone: string) {
   return html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">${body}</svg>`;
 }
 
+const MUTED = "var(--ho-muted)";
+
 const PALETTE: Tone = {
   ink: "var(--ho-ink)",
   muted: "var(--ho-muted)",
@@ -616,6 +618,8 @@ export class HeatOriginCard extends LitElement {
       // Charging or discharging is the news and takes the slot. With nothing to report,
       // the store's own name is worth more there than the word "top" on every box.
       const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : store.name;
+      const fall = config.flow.trend ? this._fall(store) : undefined;
+      const moving = fall !== undefined && Math.abs(fall) >= config.forecast_min_slope;
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
       return {
         name: store.name,
@@ -638,6 +642,7 @@ export class HeatOriginCard extends LitElement {
                 scale: [digits(floor), digits(ceiling)] as [string, string]
               },
         loop: this._loopOf(store),
+        trend: moving ? { up: (fall as number) < 0, rate: `${this._one(Math.abs(fall as number))} K/h` } : undefined,
         hint: this._storeHint(store, floor, ceiling, usable)
       };
     });
@@ -656,6 +661,26 @@ export class HeatOriginCard extends LitElement {
       const origin = buffered && config.flow.origin ? this._t("flow.from_buffer") : undefined;
       const resting = circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.off");
 
+      // Twenty-five degrees in a room is neither good nor bad until something says what
+      // was wanted there. The heat pump knows; the card only had to ask it.
+      const want = config.flow.target ? this._num(circuit.target_room) : undefined;
+      const target =
+        want === undefined || room === undefined
+          ? undefined
+          : (() => {
+              const off = room - want;
+              const tone = Math.abs(off) < 0.6 ? MUTED : off > 0 ? "var(--ho-warn)" : TONE.heating;
+              return {
+                text: this._t("flow.target", { t: `${formatTemp(want, locale)}°` }),
+                off: `${off > 0 ? "+" : off < 0 ? "−" : ""}${this._one(Math.abs(off))} K`,
+                tone
+              };
+            })();
+
+      // A return line at rest is a number with nothing behind it. What the heating curve
+      // is asking for is the one of the two that still says something.
+      const curveT = !active && config.flow.curve ? this._num(circuit.curve_flow) : undefined;
+
       // The room is what the circuit is for; flow and return are how it gets there.
       if (face === "room" && room !== undefined) {
         return {
@@ -670,9 +695,12 @@ export class HeatOriginCard extends LitElement {
           pair: {
             up: digits(flow),
             down: active ? digits(ret) : undefined,
+            curve: curveT === undefined ? undefined : digits(curveT),
+            curveLabel: curveT === undefined ? undefined : this._t("flow.curve"),
             note: buffered && !config.flow.origin ? this._t("flow.bypass") : undefined,
             spread
           },
+          target,
           hint: circuit.name
         };
       }
@@ -784,12 +812,28 @@ export class HeatOriginCard extends LitElement {
     if (!running) {
       const today = this._days()?.at(-1);
       if (today) {
-        foot.push(html`<span>${this._t("flow.today_starts")} <b>${this._t("flow.starts_n", { n: String(today.starts) })}</b></span>`);
-        const last = lastRun(today);
-        if (last) {
-          foot.push(
-            html`<span>${this._t("flow.last")} ${this._t("kind." + last.kind)} <b>${clock(new Date(last.from), locale)}–${clock(new Date(last.to), locale)}</b></span>`
-          );
+        if (config.flow.balance) {
+          // The middle of the circle already says when the last run was and how long it
+          // lasted. Saying it twice costs the line that could carry the day instead.
+          const minutes = (["heating", "hot_water", "cooling", "defrost"] as const)
+            .map((k) => today.minutes[k] ?? 0)
+            .reduce((a, b) => a + b, 0);
+          const e = config.entities;
+          const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
+          const heatSum = (kwh(e.heating_heat_today) ?? 0) + (kwh(e.hot_water_heat_today) ?? 0) + (kwh(e.heat_today) ?? 0);
+          const elecSum = (kwh(e.heating_electric_today) ?? 0) + (kwh(e.hot_water_electric_today) ?? 0) + (kwh(e.electric_today) ?? 0);
+          const az = elecSum > 0.05 ? heatSum / elecSum : undefined;
+          foot.push(html`<span>${this._t("day.balance")} <b>${this._t("flow.starts_n", { n: String(today.starts) })}</b>${
+            minutes >= 1 ? html` · <b>${this._hm(minutes)}</b>` : nothing
+          }${az === undefined ? nothing : html` · ${this._t("cop.az")} <b>${this._one(az)}</b>`}</span>`);
+        } else {
+          foot.push(html`<span>${this._t("flow.today_starts")} <b>${this._t("flow.starts_n", { n: String(today.starts) })}</b></span>`);
+          const last = lastRun(today);
+          if (last) {
+            foot.push(
+              html`<span>${this._t("flow.last")} ${this._t("kind." + last.kind)} <b>${clock(new Date(last.from), locale)}–${clock(new Date(last.to), locale)}</b></span>`
+            );
+          }
         }
       }
     }
@@ -872,7 +916,7 @@ export class HeatOriginCard extends LitElement {
     const rightCount = bufIx.length + circuits.length;
     const H = Math.max(rightY(rightCount - 1) + BOX_H_COL, leftY(hotIx.length - 1) + BOX_H_COL, cy + reach + 6) + 6;
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low" };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low", restColour: config.flow.rest_colour };
     const parts: unknown[] = [];
 
     // The pump to hot water: out of the ring at half past seven, clear of the moon.
@@ -964,7 +1008,7 @@ export class HeatOriginCard extends LitElement {
 
     if (this._narrow) return this._renderFlowList(stores.concat(circuits), running);
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low" };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low", restColour: config.flow.rest_colour };
     const parts: unknown[] = [];
 
     stores.forEach((model, i) => {

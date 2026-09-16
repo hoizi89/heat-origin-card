@@ -107,6 +107,8 @@ export function states(mode = "DHW"): Record<string, HassEntity> {
     entity("sensor.lambdawp_hc1_flow_line_temperature", 25.8, "°C"),
     entity("sensor.lambdawp_hc1_return_line_temperature", 24.7, "°C"),
     entity("sensor.lambdawp_hc1_room_device_temperature", 24.5, "°C"),
+    entity("sensor.lambdawp_hc1_target_room_temperature", 22.5, "°C"),
+    entity("sensor.lambdawp_hc1_heating_curve_flow_line_temperature_calc", 30.6, "°C"),
     entity("sensor.lambdawp_hc2_operating_state", "OFF"),
     entity("sensor.lambdawp_hc2_flow_line_temperature", 25.8, "°C"),
     entity("sensor.lambdawp_hc2_return_line_temperature", 23.4, "°C"),
@@ -140,7 +142,9 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       state: "sensor.lambdawp_hc1_operating_state",
       flow: "sensor.lambdawp_hc1_flow_line_temperature",
       return: "sensor.lambdawp_hc1_return_line_temperature",
-      room: "sensor.lambdawp_hc1_room_device_temperature"
+      room: "sensor.lambdawp_hc1_room_device_temperature",
+      target_room: "sensor.lambdawp_hc1_target_room_temperature",
+      curve_flow: "sensor.lambdawp_hc1_heating_curve_flow_line_temperature_calc"
     },
     {
       name: "Heizkörper OG",

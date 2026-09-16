@@ -101,6 +101,10 @@ export interface CircuitConfig {
   room?: string;
   /** Words of `state` that mean the circuit is taking heat; sensible defaults apply. */
   active?: string[];
+  /** What the room is asked to be. With it, the room's own figure becomes an answer. */
+  target_room?: string;
+  /** The flow the heating curve is asking for; at rest it says more than the return. */
+  curve_flow?: string;
   /** The symbol, guessed from the name when left out. */
   icon?: string;
   /** The mark under the symbol — the storey, guessed from the name when left out. */
@@ -190,6 +194,16 @@ export interface FlowOptions {
   centre?: CentreValue;
   /** How much of the line under the drawing is kept. */
   foot?: FootStyle;
+  /** The room a circuit is asked for, under the room it has. */
+  target?: boolean;
+  /** What the heating curve asks of a resting circuit, in place of its return. */
+  curve?: boolean;
+  /** Which way a store is going, from the fall the card measures anyway. */
+  trend?: boolean;
+  /** The day's starts, running time and performance factor, in place of the last run. */
+  balance?: boolean;
+  /** Keep a box's symbol in its own colour while it rests, so the card keeps its order. */
+  rest_colour?: boolean;
 }
 
 export interface DayOptions {

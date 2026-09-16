@@ -114,7 +114,12 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
       ring: oneOf(flow.ring, ["both", "clock", "shares"] as const, "both"),
       sun: flow.sun ?? true,
       centre: oneOf(flow.centre, ["heat", "power", "both"] as const, "heat"),
-      foot: oneOf(flow.foot, ["full", "drive", "none"] as const, step.foot)
+      foot: oneOf(flow.foot, ["full", "drive", "none"] as const, step.foot),
+      target: flow.target ?? true,
+      curve: flow.curve ?? true,
+      trend: flow.trend ?? true,
+      balance: flow.balance ?? true,
+      rest_colour: flow.rest_colour ?? true
     },
     forecast_min_slope: config.forecast_min_slope ?? 0.4,
     day: {
@@ -155,7 +160,12 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
       sun: resolved.flow.sun,
       bypass: resolved.flow.bypass,
       range: resolved.flow.range,
-      origin: resolved.flow.origin
+      origin: resolved.flow.origin,
+      target: resolved.flow.target,
+      curve: resolved.flow.curve,
+      trend: resolved.flow.trend,
+      balance: resolved.flow.balance,
+      rest_colour: resolved.flow.rest_colour
     },
     day: {
       ...config.day,
@@ -374,7 +384,12 @@ export function getConfigForm(locale: string) {
             { name: "sun", selector: { boolean: {} } },
             { name: "bypass", selector: { boolean: {} } },
             { name: "range", selector: { boolean: {} } },
-            { name: "origin", selector: { boolean: {} } }
+            { name: "origin", selector: { boolean: {} } },
+            { name: "target", selector: { boolean: {} } },
+            { name: "curve", selector: { boolean: {} } },
+            { name: "trend", selector: { boolean: {} } },
+            { name: "balance", selector: { boolean: {} } },
+            { name: "rest_colour", selector: { boolean: {} } }
           ]
         }
       ]
@@ -441,6 +456,11 @@ export function getConfigForm(locale: string) {
     range: t("editor.range"),
     origin: t("editor.origin"),
     foot: t("editor.foot"),
+    target: t("editor.target"),
+    curve: t("editor.curve"),
+    trend: t("editor.trend"),
+    balance: t("editor.balance"),
+    rest_colour: t("editor.rest_colour"),
     days: t("editor.days"),
     short_run: t("editor.short_run"),
     cycling_from: t("editor.cycling_from")
