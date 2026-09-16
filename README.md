@@ -96,8 +96,8 @@ flow:
 | `flow.labels` | `short` | Symbol with the storey under it; `icon` for the symbol alone, `name` for the name. |
 | `flow.circuit` | `room` | The room with its target, flow and return beside them; `room_plain` leaves the target off; `flow` puts the flow first. |
 | `flow.curve` | `false` | A resting circuit shows its room and the room's target alone — its flow and return are standing water. With this it also shows its flow and, beside it, what the heating curve wants of it. |
-| `flow.gauge` | `bar` | The store's level as a bar in the box's foot; `box` fills the whole box. |
-| `flow.scale` | `true` | Empty and full written under the level. |
+| `flow.gauge` | `zones` | The store's level as stages: the stretch below the first set-point, then one per set-point, each filling on its own, so what the eye reads is which stage the store has reached rather than a percentage. `scale` draws a thermometer — the bar as the scale itself, cold to warm, with a pointer on the temperature. `bar` is a plain filling bar, `box` fills the whole box. |
+| `flow.scale` | `true` | The scale's ends written under the level (`scale`, `bar`, `box`); the stages name themselves instead. |
 | `flow.trend` | `rate` | Which way a store is going, from the fall the card measures anyway: arrow with the K/h where it fits, `arrow` alone, or `none`. |
 | `flow.rest_colour` | `true` | A resting box keeps its symbol in its own colour instead of greying out with its state. |
 | `flow.buffer_line` | `range` | While the buffer carries the circuits alone: the line with how long it can keep going; `line` alone; `named` also writes "from the buffer" in the circuit's box; `none` draws nothing. |

@@ -39,6 +39,10 @@ export interface BoxModel {
     /** Where each set-point sits on the bar, and what it is called. */
     marks: Array<{ at: number; name: string }>;
     scale?: [string, string];
+    /** The set-point that is the top of the scale, if one is; it names the right-hand end. */
+    ceilingName?: string;
+    /** The word before the first mark's name for the stretch under it: "below". */
+    under?: string;
   };
   /**
    * A circuit: the flow above, and below it either the return — which matters while
@@ -78,7 +82,7 @@ function scaleOf(h: number) {
 /** A box: symbol and storey on the left, two rows of figures, and a foot of its own. */
 export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: Tone, style: {
   labels: "short" | "icon" | "name";
-  gauge: "bar" | "box";
+  gauge: "zones" | "scale" | "bar" | "box";
   scale: boolean;
   /** A resting box keeps its symbol in its own colour, so the card keeps its order. */
   restColour: boolean;
@@ -199,6 +203,61 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
   }
 
+  // Stages instead of a percentage: the stretch under the first set-point, then one
+  // stretch per set-point, each filling on its own. "Full" is not a thing here; what
+  // the eye reads is which stage the store has reached.
+  if (m.level && style.gauge === "zones") {
+    const bw = rx - tx;
+    const by = y + S.bar - 1;
+    const bh = S.barH + 1;
+    const bounds = [0, ...m.level.marks.map((k) => k.at), 1];
+    const first = m.level.marks[0];
+    const names = [first ? [m.level.under, first.name].filter(Boolean).join(" ") : "", ...m.level.marks.map((k) => k.name)];
+    const wanted: Array<{ x: number; text: string; anchor: "middle" | "end" }> = [];
+    const fillX = tx + bw * m.level.top;
+    bounds.slice(0, -1).forEach((b, i) => {
+      const last = i === bounds.length - 2;
+      const x0 = tx + bw * b + (i ? 1.5 : 0);
+      const x1 = tx + bw * bounds[i + 1] - (last ? 0 : 1.5);
+      if (x1 - x0 < 3) return;
+      parts.push(svg`<rect x=${x0.toFixed(1)} y=${by} width=${(x1 - x0).toFixed(1)} height=${bh} rx="2" fill=${t.track}/>`);
+      const to = Math.min(x1, Math.max(x0, fillX));
+      if (to - x0 >= 1) {
+        // The stretch under the first set-point is cold water: it fills in grey, not in the store's colour.
+        const cold = i === 0 && m.level!.marks.length > 0;
+        parts.push(svg`<rect x=${x0.toFixed(1)} y=${by} width=${(to - x0).toFixed(1)} height=${bh} rx="2"
+          fill=${cold ? t.muted : m.tone} opacity=${cold ? 0.55 : to < x1 ? 0.7 : 1}/>`);
+      }
+      if (names[i]) wanted.push({ x: (x0 + x1) / 2, text: names[i], anchor: "middle" });
+    });
+    if (m.level.ceilingName) wanted.push({ x: rx, text: m.level.ceilingName, anchor: "end" });
+    // The set-points' own names come first; "below Eco" is the one to drop where the box is narrow.
+    parts.push(...row([...wanted.slice(1), ...wanted.slice(0, 1)], y + S.scale, S.micro, t.muted));
+  }
+
+  // The bar as the scale itself, coloured from cold to the store's own tone, and a
+  // pointer on the temperature the store has. Nothing fills and nothing runs over.
+  if (m.level && style.gauge === "scale") {
+    const bw = rx - tx;
+    const by = y + S.bar - 1;
+    const bh = S.barH + 1;
+    const grad = `ho-scale-${uid}`;
+    parts.push(svg`<defs><linearGradient id=${grad} x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color=${t.muted} stop-opacity="0.4"/><stop offset="1" stop-color=${m.tone}/></linearGradient></defs>
+      <rect x=${tx} y=${by} width=${bw} height=${bh} rx=${bh / 2} fill=${`url(#${grad})`}/>`);
+    for (const mark of m.level.marks) {
+      const mx = (tx + bw * mark.at).toFixed(1);
+      parts.push(svg`<line x1=${mx} x2=${mx} y1=${by - 2} y2=${by + bh + 2} stroke=${t.surface} stroke-width="1.4"/>`);
+    }
+    parts.push(svg`<rect x=${(tx + bw * m.level.top - 1.2).toFixed(1)} y=${by - 4} width="2.4" height=${bh + 8} rx="1" fill=${t.ink}/>`);
+    const wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }> = [];
+    if (style.scale && m.level.scale) wanted.push({ x: tx, text: m.level.scale[0], anchor: "start" });
+    for (const mark of m.level.marks) wanted.push({ x: tx + bw * mark.at, text: mark.name, anchor: "middle" });
+    const end = [m.level.ceilingName, style.scale ? m.level.scale?.[1] : undefined].filter(Boolean).join(" ");
+    if (end) wanted.push({ x: rx, text: end, anchor: "end" });
+    parts.push(...row(wanted, y + S.scale, S.micro, t.muted));
+  }
+
   if (m.level && style.gauge === "bar") {
     const bw = rx - tx;
     const by = y + S.bar;
@@ -215,7 +274,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
 
   // A bar without its two ends is a riddle, so the scale is written under it; and a
   // notch without a name is a line nobody can read, so each set-point writes its own.
-  if (m.level && style.scale && m.level.scale) {
+  if (m.level && style.scale && m.level.scale && (style.gauge === "bar" || style.gauge === "box")) {
     const bw = rx - tx;
     parts.push(svg`<text x=${tx} y=${y + S.scale} font-size=${S.micro} fill=${t.muted}>${m.level.scale[0]}</text>`);
     parts.push(svg`<text x=${rx} y=${y + S.scale} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.level.scale[1]}</text>`);
@@ -234,6 +293,30 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   }
 
   return group(parts, m, click);
+}
+
+/**
+ * One row of small words, each where it belongs, and none on top of another: the ends
+ * are placed first, then the rest in the order given, and whatever would collide is
+ * left out — the box's tooltip carries every name anyway.
+ */
+function row(wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }>, y: number, size: number, tone: string) {
+  const width = (s: string) => s.length * size * 0.56;
+  const span = (w: { x: number; text: string; anchor: string }): [number, number] => {
+    const tw = width(w.text);
+    return w.anchor === "start" ? [w.x, w.x + tw] : w.anchor === "end" ? [w.x - tw, w.x] : [w.x - tw / 2, w.x + tw / 2];
+  };
+  const ends = wanted.filter((w) => w.anchor !== "middle");
+  const middles = wanted.filter((w) => w.anchor === "middle");
+  const placed: Array<[number, number]> = ends.map(span);
+  const out = [...ends];
+  for (const w of middles) {
+    const s = span(w);
+    if (placed.some(([a, b]) => s[0] < b + 4 && s[1] > a - 4)) continue;
+    placed.push(s);
+    out.push(w);
+  }
+  return out.map((w) => svg`<text x=${w.x.toFixed(1)} y=${y} text-anchor=${w.anchor} font-size=${size} fill=${tone}>${w.text}</text>`);
 }
 
 function group(parts: unknown[], m: BoxModel, click?: () => void) {

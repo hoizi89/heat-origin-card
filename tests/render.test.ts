@@ -244,6 +244,29 @@ describe("the flow", () => {
     expect(text(root)).not.toContain("Kurzläufe");
   });
 
+  it("draws a store's level as stages between its set-points, and one stage where there are none", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser")) as Element;
+    const t = text(hotWater);
+    expect(t).toContain("unter Eco");
+    expect(t).toContain("Soll");
+    expect(t).toContain("PV");
+    // Three stages, each a track of its own; 57,6° fills every one of them.
+    const tracks = [...hotWater.querySelectorAll("rect")].filter((r) => r.getAttribute("rx") === "2");
+    expect(tracks.length).toBe(6);
+    const buffer = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Puffer")) as Element;
+    expect([...buffer.querySelectorAll("rect")].filter((r) => r.getAttribute("rx") === "2").length).toBe(2);
+    expect(text(buffer)).not.toMatch(/unter (Eco|Soll|PV)/);
+  });
+
+  it("draws the level as a thermometer when asked: a scale with a pointer, its ends and marks named", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { gauge: "scale" } });
+    const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser")) as Element;
+    expect(hotWater.querySelector("linearGradient")).not.toBeNull();
+    expect(text(hotWater)).toContain("PV 57,5°");
+    expect(text(hotWater)).toContain("40,0°");
+  });
+
   it("names the store's empty and full ends in its tooltip", async () => {
     const { root } = await mount(FULL_CONFIG);
     const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");

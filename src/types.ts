@@ -26,7 +26,7 @@ export type LabelStyle = "short" | "icon" | "name";
 /** Which face a heating circuit shows; `room_plain` is the room without its target. */
 export type CircuitFace = "room" | "room_plain" | "flow";
 /** Where a store's level is drawn. */
-export type GaugeStyle = "bar" | "box";
+export type GaugeStyle = "zones" | "scale" | "bar" | "box";
 /** Which way a store is going, and whether the rate stands beside the arrow. */
 export type TrendStyle = "rate" | "arrow" | "none";
 /** What rings the heat pump: the day's dial with or without the hours of daylight, or no dial at all. */

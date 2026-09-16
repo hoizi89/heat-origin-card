@@ -587,7 +587,12 @@ export class HeatOriginCard extends LitElement {
                 top: at(top),
                 bottom: at(bottom ?? top),
                 marks,
-                scale: [digits(floor), digits(ceiling)] as [string, string]
+                scale: [digits(floor), digits(ceiling)] as [string, string],
+                // The set-point that is the top of the scale names its right-hand end.
+                ceilingName: (["eco", "target", "pv", "max"] as const)
+                  .filter((key) => store.marks?.[key] !== undefined && Math.abs((store.marks?.[key] as number) - ceiling) < 0.05)
+                  .map((key) => this._t(`mark.${key}`))[0],
+                under: this._t("stores.under")
               },
         loop: this._loopOf(store),
         trend: moving

@@ -56,7 +56,7 @@ export const CHOICES = {
   layout: ["columns", "split"],
   labels: ["short", "icon", "name"],
   circuit: ["room", "room_plain", "flow"],
-  gauge: ["bar", "box"],
+  gauge: ["zones", "scale", "bar", "box"],
   trend: ["rate", "arrow", "none"],
   ring: ["sun", "plain", "shares"],
   centre: ["heat", "power", "both"],
@@ -86,7 +86,7 @@ function resolveFlow(flow: FlowOptions): ResolvedFlow {
     circuit: oneOf(flow.circuit, CHOICES.circuit, flow.target === false ? "room_plain" : "room"),
     // Off by default: at rest the room and its target already say why the circuit rests.
     curve: flow.curve ?? flow.resting === "curve",
-    gauge: oneOf(flow.gauge, CHOICES.gauge, "bar"),
+    gauge: oneOf(flow.gauge, CHOICES.gauge, "zones"),
     scale: typeof flow.scale === "boolean" ? flow.scale : flow.scale === undefined ? !low : flow.scale !== "hide",
     trend: oneOf(flow.trend, CHOICES.trend, legacyTrend ?? "rate"),
     ring: oneOf(flow.ring, CHOICES.ring, legacyRing),
@@ -203,7 +203,7 @@ export function getConfigForm(locale: string) {
     "scale", "trend", "rest_colour", "buffer_line", "foot", "balance"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "circuit", "curve", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
+  const helped = ["mode", "circuit", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "balance"];
 
   return {
     schema,

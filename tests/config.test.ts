@@ -25,10 +25,10 @@ describe("configuration", () => {
   it("gives every choice a word, and a nonsense word falls back", () => {
     const flow = resolveConfig(bare).flow;
     expect(flow).toMatchObject({
-      layout: "columns", labels: "short", circuit: "room", curve: false, gauge: "bar", scale: true, trend: "rate",
+      layout: "columns", labels: "short", circuit: "room", curve: false, gauge: "zones", scale: true, trend: "rate",
       ring: "sun", centre: "heat", foot: "full", balance: true, buffer_line: "range", rest_colour: true
     });
-    expect(resolveConfig({ ...bare, flow: { gauge: "tank" as never, trend: "maybe" as never } }).flow).toMatchObject({ gauge: "bar", trend: "rate" });
+    expect(resolveConfig({ ...bare, flow: { gauge: "tank" as never, trend: "maybe" as never } }).flow).toMatchObject({ gauge: "zones", trend: "rate" });
   });
 
   it("still reads the switches earlier versions wrote, each as the word it meant", () => {
@@ -62,7 +62,7 @@ describe("configuration", () => {
       flow: { sun: false, detail: "low", extras: [{ entity: "sensor.y" }] }
     } as never);
     // Every list and switch reads what is on the screen: the old switch became its word, the old dial its three keys.
-    expect(data.flow).toMatchObject({ ring: "plain", labels: "icon", scale: false, foot: "drive", gauge: "bar", curve: false });
+    expect(data.flow).toMatchObject({ ring: "plain", labels: "icon", scale: false, foot: "drive", gauge: "zones", curve: false });
     expect(data.font).toBe("system");
     expect(data.shape).toBe("standard");
     // The switches and the sections that no longer exist do not come back to be written again.
@@ -84,7 +84,7 @@ describe("configuration", () => {
     expect(form.computeHelper({ name: "curve" })).toContain("curve_flow");
     expect(form.computeHelper({ name: "buffer_line" })).toContain("steht");
     expect(form.computeHelper({ name: "scale" })).toContain("usable_min");
-    expect(form.computeHelper({ name: "gauge" })).toBeUndefined();
+    expect(form.computeHelper({ name: "labels" })).toBeUndefined();
     // Every word of every list has its own label.
     for (const m of flat.matchAll(/"label":"(editor\.[^"]+)"/g)) throw new Error(`no text for ${m[1]}`);
   });
