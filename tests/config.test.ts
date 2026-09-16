@@ -1,20 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { assertConfig, editorData, getConfigForm, resolveConfig } from "../src/config";
+import { assertConfig, editorData, getConfigForm, resolveConfig, stubConfig } from "../src/config";
 import { FULL_CONFIG } from "./fixtures";
+
+const bare = { type: "t", entities: { mode: "sensor.x" } };
 
 describe("configuration", () => {
   it("needs the operating state and nothing else", () => {
     expect(() => assertConfig({ type: "custom:heat-origin-card", entities: {} as never })).toThrow();
     expect(() => assertConfig({ type: "custom:heat-origin-card", entities: { mode: "sensor.x" } })).not.toThrow();
-  });
-
-  it("leaves the storage section to the flow, which already draws every store", () => {
-    expect(resolveConfig({ type: "t", entities: { mode: "sensor.x" } }).sections.stores).toBe(false);
-    // The flow draws each store as a level gauge, so a section repeating it stays off …
-    expect(resolveConfig(FULL_CONFIG).sections.stores).toBe(false);
-    // … unless there is no flow to repeat, or unless it is asked for.
-    expect(resolveConfig({ ...FULL_CONFIG, sections: { flow: false } }).sections.stores).toBe(true);
-    expect(resolveConfig({ ...FULL_CONFIG, sections: { stores: true } }).sections.stores).toBe(true);
   });
 
   it("reads a symbol and a storey out of every name", () => {
@@ -24,60 +17,89 @@ describe("configuration", () => {
     expect(resolved.stores.map((x) => x.icon)).toEqual(["water", "buffer"]);
   });
 
-  it("moves every switch together with the detail dial, and lets one be overruled", () => {
-    const low = resolveConfig({ type: "t", entities: { mode: "sensor.x" }, flow: { detail: "low" } }).flow;
-    expect(low.labels).toBe("icon");
-    expect(low.foot).toBe("drive");
-    const mixed = resolveConfig({ type: "t", entities: { mode: "sensor.x" }, flow: { detail: "low", labels: "name" } }).flow;
-    expect(mixed.labels).toBe("name");
-    expect(mixed.foot).toBe("drive");
-  });
-
   it("recognises hot water by name and treats the rest as buffers", () => {
     const stores = resolveConfig(FULL_CONFIG).stores;
     expect(stores.map((s) => s.kind)).toEqual(["hot_water", "buffer"]);
   });
 
-  it("honours a chosen order and appends the rest", () => {
-    const order = resolveConfig({
-      type: "t",
-      entities: { mode: "sensor.x" },
-      sections: { order: ["stores", "nonsense" as never] }
-    }).sections.order;
-    expect(order).toEqual(["stores", "flow", "day"]);
+  it("gives every choice a word, and a nonsense word falls back", () => {
+    const flow = resolveConfig(bare).flow;
+    expect(flow).toMatchObject({
+      layout: "columns", labels: "short", circuit: "room", resting: "curve", gauge: "bar", scale: "show", trend: "rate",
+      ring: "both", dial: "sun", centre: "heat", foot: "full", idle_foot: "balance", buffer_line: "range", rest: "colour"
+    });
+    expect(resolveConfig({ ...bare, flow: { gauge: "tank" as never, trend: "maybe" as never } }).flow).toMatchObject({ gauge: "bar", trend: "rate" });
   });
 
-  it("fills in the switches, because an empty switch would read as off, and leaves the rest alone", () => {
-    const data = editorData({ type: "t", entities: { mode: "sensor.x" }, stores: [{ name: "Warmwasser", top: "sensor.t" }] });
-    // A section left out of the YAML is on, so its switch has to say on.
-    expect(data.sections).toMatchObject({ flow: true, day: true, stores: false });
-    expect(data.flow).toMatchObject({ spread: true, circuit_details: false, sun: true, bypass: true });
-
-    // Home Assistant writes back every field the form shows. A dropdown filled in with
-    // today's default would freeze it into the YAML, and a later default could never
-    // reach the card again — so the dropdowns stay empty until somebody chooses.
-    expect(data.font).toBeUndefined();
-    expect(data.source).toBeUndefined();
-    expect(data.shape).toBeUndefined();
-    expect(data.flow?.layout).toBeUndefined();
-    expect(data.flow?.detail).toBeUndefined();
-    expect(data.flow?.labels).toBeUndefined();
-
-    // What somebody did choose comes back as they wrote it.
-    const chosen = editorData({ type: "t", entities: { mode: "sensor.x" }, font: "mono", flow: { labels: "name" } });
-    expect(chosen.font).toBe("mono");
-    expect(chosen.flow?.labels).toBe("name");
-    expect(data.day).toMatchObject({ days: 2, short_run: 120, cycling_from: 3 });
-    // A section switched off stays off, and lists stay as written.
-    const off = editorData({ type: "t", entities: { mode: "sensor.x" }, sections: { day: false }, flow: { extras: [{ entity: "sensor.y" }] } });
-    expect(off.sections?.day).toBe(false);
-    expect(off.flow?.extras).toEqual([{ entity: "sensor.y" }]);
-    expect(off.modes).toBeUndefined();
+  it("still reads the switches earlier versions wrote, each as the word it meant", () => {
+    const old = resolveConfig({
+      ...bare,
+      flow: { spread: false, sun: false, target: false, curve: false, range: false, balance: false, rest_colour: false, trend: false }
+    }).flow;
+    expect(old).toMatchObject({
+      foot: "no_spread", dial: "plain", circuit: "room_plain", resting: "flow", buffer_line: "line", idle_foot: "last", rest: "grey", trend: "none"
+    });
+    expect(resolveConfig({ ...bare, flow: { bypass: false } }).flow.buffer_line).toBe("none");
+    expect(resolveConfig({ ...bare, flow: { origin: true } }).flow.buffer_line).toBe("named");
+    expect(resolveConfig({ ...bare, flow: { trend: true } }).flow.trend).toBe("rate");
+    // 0.9 wrote the foot in full with the spread switched off beside it; that is a foot without the spread.
+    expect(resolveConfig({ ...bare, flow: { foot: "full", spread: false } }).flow.foot).toBe("no_spread");
+    // The sparing detail step once set three things at once.
+    expect(resolveConfig({ ...bare, flow: { detail: "low" } }).flow).toMatchObject({ labels: "icon", scale: "hide", foot: "drive" });
+    // A word written beside an old switch wins.
+    expect(resolveConfig({ ...bare, flow: { sun: false, dial: "sun" } }).flow.dial).toBe("sun");
   });
 
-  it("labels the flow sensor and the flow section apart", () => {
+  it("shows the editor every choice at the word the card uses, and drops what earlier versions wrote", () => {
+    const data = editorData({
+      ...bare,
+      sections: { day: true },
+      day: { days: 2 },
+      flow: { sun: false, detail: "low", extras: [{ entity: "sensor.y" }] }
+    } as never);
+    // Every list reads what is on the screen: the old switch became its word, the old dial its three words.
+    expect(data.flow).toMatchObject({ dial: "plain", labels: "icon", scale: "hide", foot: "drive", gauge: "bar" });
+    expect(data.font).toBe("system");
+    expect(data.shape).toBe("standard");
+    // The switches and the sections that no longer exist do not come back to be written again.
+    expect(data.flow).not.toHaveProperty("sun");
+    expect(data.flow).not.toHaveProperty("detail");
+    expect(data).not.toHaveProperty("sections");
+    expect(data).not.toHaveProperty("day");
+    // Lists stay as written, and an empty one is not invented.
+    expect(data.flow?.extras).toEqual([{ entity: "sensor.y" }]);
+    expect(editorData(bare).flow).not.toHaveProperty("extras");
+    expect(data.modes).toBeUndefined();
+  });
+
+  it("offers every choice as a list, never a switch, and says when each one shows", () => {
+    const form = getConfigForm("de");
+    const flat = JSON.stringify(form.schema);
+    expect(flat).not.toContain('"boolean"');
+    expect(form.computeLabel({ name: "ring" })).toBe("Um den Kreis");
+    expect(form.computeHelper({ name: "ring" })).toContain("solange sie läuft");
+    expect(form.computeHelper({ name: "buffer_line" })).toContain("steht");
+    expect(form.computeHelper({ name: "scale" })).toContain("usable_min");
+    expect(form.computeHelper({ name: "gauge" })).toBeUndefined();
+    // Every word of every list has its own label.
+    for (const m of flat.matchAll(/"label":"(editor\.[^"]+)"/g)) throw new Error(`no text for ${m[1]}`);
+  });
+
+  it("labels the flow sensor and the flow group apart", () => {
     const form = getConfigForm("de");
     expect(form.computeLabel({ name: "flow", selector: { entity: {} } })).toBe("Vorlauf");
-    expect(form.computeLabel({ name: "flow" })).toBe("Wärmefluss");
+    expect(form.computeLabel({ name: "flow" })).toBe("flow");
+  });
+
+  it("guesses the heat pump's own state, not the ambient one that carries the same word", () => {
+    const states = {
+      "sensor.lambdawp_ambient_operating_state": {},
+      "sensor.lambdawp_hc1_operating_state": {},
+      "sensor.lambdawp_hp1_operating_state": {},
+      "sensor.lambdawp_hp1_actual_heating_capacity": {}
+    };
+    expect(stubConfig(states).entities.mode).toBe("sensor.lambdawp_hp1_operating_state");
+    const { "sensor.lambdawp_hp1_operating_state": _gone, ...without } = states;
+    expect(stubConfig(without).entities.mode).not.toContain("ambient");
   });
 });

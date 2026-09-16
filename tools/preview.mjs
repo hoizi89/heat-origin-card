@@ -96,7 +96,7 @@ const config = {
     { name: "Warmwasser", top: "sensor.lambdawp_boil1_actual_high_temperature", bottom: "sensor.lambdawp_boil1_actual_low_temperature", marks: { eco: 44.5, target: 48.5, pv: 57.5 }, volume: 300 },
     { name: "Puffer", top: "sensor.lambdawp_buff1_actual_high_temperature", bottom: "sensor.lambdawp_buff1_actual_low_temperature", volume: 300 }
   ],
-  flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas" }] }
+  flow: { extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas" }] }
 };
 const idleStates = { ...states, "sensor.lambdawp_hp1_operating_state": { ...states["sensor.lambdawp_hp1_operating_state"], state: "STBY", last_changed: new RealDate(2026, 8, 15, 13, 39, 46).toISOString() }, "switch.zirkulationspumpe": { ...states["switch.zirkulationspumpe"], state: "off" } };
 const idleHass = { ...hass, states: idleStates };

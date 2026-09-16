@@ -113,8 +113,8 @@ describe("the flow", () => {
     expect(text(eg as Element)).toContain("30,6°");
   });
 
-  it("leaves both out when they are switched off", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { target: false, curve: false } });
+  it("leaves both out when asked for the plain room and the flow alone", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain", resting: "flow" } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
     expect(text(eg as Element)).not.toContain("Soll 22,5°");
     expect(text(eg as Element)).not.toContain("Kurve");
@@ -126,8 +126,8 @@ describe("the flow", () => {
     expect(foot).toContain("Heute");
     expect(foot).toContain("3 Starts");
     expect(foot).not.toContain("zuletzt");
-    // Switched off, the old pair comes back.
-    const old = await mount({ ...FULL_CONFIG, flow: { balance: false } }, idle());
+    // Asked for the last run, the old pair comes back.
+    const old = await mount({ ...FULL_CONFIG, flow: { idle_foot: "last" } }, idle());
     expect(text(old.root.querySelector(".section .foot") as Element)).toContain("zuletzt");
   });
 
@@ -199,7 +199,7 @@ describe("the flow", () => {
   });
 
   it("leaves the spread out when asked", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { spread: false } });
+    const { root } = await mount({ ...FULL_CONFIG, flow: { foot: "no_spread" } });
     expect(text(root)).not.toContain("Spreizung");
     expect(text(root)).not.toContain("Δ 1,1 K");
   });
@@ -213,48 +213,10 @@ describe("the flow", () => {
     expect(t).toContain("40 min");
     expect(t).toContain("Heute 3 Starts");
     expect(t).not.toContain("0,00 kW");
-    // Hot gas means nothing with the compressor at rest; the store's bottom lives in the storage section.
+    // Hot gas means nothing with the compressor at rest; the store's bottom is the tooltip's business.
     expect(text(root.querySelector(".section .foot") as Element)).not.toContain("Heißgas");
     expect(text(root.querySelector(".section svg") as Element)).not.toContain("unten");
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(0);
-  });
-});
-
-describe("the day band", () => {
-  it("reads history, counts starts and short runs as figures, without a notice for one short run", async () => {
-    const { root, hass } = await mount(FULL_CONFIG);
-    expect((hass as ReturnType<typeof makeHass>).calls).toContain("history/history_during_period");
-    expect(root.querySelectorAll("rect.seg").length).toBeGreaterThan(8);
-    const stats = text(root.querySelector(".stats") as Element);
-    expect(stats).toContain("Starts 3");
-    expect(stats).toContain("Kurzläufe 0 Gestern 1");
-    expect(stats).toContain("Warmwasser 1:59");
-    expect(stats).toContain("Heizen 2:16");
-    expect(root.querySelector(".alert")).toBeNull();
-    expect(root.querySelectorAll("path.short-mark")).toHaveLength(1);
-  });
-
-  it("raises a notice once the heat pump cycles", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, day: { cycling_from: 1, days: 2 } });
-    // Yesterday's single short run does not count for today.
-    expect(root.querySelector(".alert")).toBeNull();
-  });
-});
-
-describe("performance factors", () => {
-  it("stand under the running times, today against the month, with an arrow where they part", async () => {
-    const { root } = await mount(FULL_CONFIG);
-    const stats = [...root.querySelectorAll(".stat")].map((s) => text(s));
-    expect(stats.find((s) => s.startsWith("Heizen"))).toContain("AZ 6,2 Monat 6,0");
-    expect(stats.find((s) => s.startsWith("Warmwasser"))).toContain("AZ 4,1 ▼ Monat 5,1");
-    expect(text(root)).not.toContain("Umweltwärme");
-    expect(text(root)).not.toContain("KWH");
-  });
-
-  it("falls back to the year where no month is given", async () => {
-    const { cop_heating_month, cop_hot_water_month, ...entities } = FULL_CONFIG.entities;
-    const { root } = await mount({ ...FULL_CONFIG, entities });
-    expect(text(root.querySelector(".stats") as Element)).toContain("AZ 4,1 Jahr 4,4");
   });
 
   it("names the ground for a ground source heat pump", async () => {
@@ -264,65 +226,26 @@ describe("performance factors", () => {
     const { root } = await mount({ ...FULL_CONFIG, source: "ground", entities: { ...FULL_CONFIG.entities, outdoor: undefined } }, hass);
     expect(text(root.querySelector(".foot") as Element)).toContain("Erdreich");
   });
-});
 
-describe("storage", () => {
-  /** The section is a repeat of the flow's own gauges, so every test here asks for it. */
-  const WITH_STORES = { ...FULL_CONFIG, sections: { stores: true } };
-  it("shows the temperature first, the layering, the marks and the usable heat from the volume", async () => {
-    const { root } = await mount(WITH_STORES);
-    const stores = [...root.querySelectorAll(".store")].map((s) => text(s));
-    expect(stores[0]).toContain("Warmwasser 57,6 °C lädt unten 57,6 · gleichmäßig");
-    expect(stores[0]).toContain("6,1 kWh über 40 °C");
-    expect(stores[0]).not.toContain("%");
-    expect(stores[1]).toContain("über 30 °C");
-    // Every tank has the same height; its filling runs from the usable minimum to the highest mark.
-    const fills = [...root.querySelectorAll(".tank .fill")].map((f) => (f as HTMLElement).style.height);
-    expect(fills).toEqual(["100%", "78.2%"]);
-    expect(root.querySelectorAll(".tank .tick").length).toBe(2);
-    expect(stores[0]).toContain("PV 57,5");
-    expect(stores[1]).toContain("unten 51,7 · Δ 3,5 K");
-    expect(stores[1]).toContain("8,2 kWh");
-    expect(text(root)).toContain("≈ 14,3 kWh nutzbar");
-    expect(root.querySelectorAll(".mark.reached")).toHaveLength(3);
-    expect(stores[0]).toContain("Zirkulation 34,3 °C · läuft");
-    expect(stores[1]).not.toContain("Zirkulation");
+  it("reads today's history once, and nothing more: no band, no statistics", async () => {
+    const { root, hass } = await mount(FULL_CONFIG);
+    const calls = (hass as ReturnType<typeof makeHass>).calls;
+    expect(calls.filter((c) => c === "history/history_during_period")).toHaveLength(2);
+    expect(calls).not.toContain("recorder/statistics_during_period");
+    expect(root.querySelector("rect.seg")).toBeNull();
+    expect(root.querySelector(".store")).toBeNull();
+    expect(text(root)).not.toContain("Kurzläufe");
   });
 
-  it("folds a circulation written as a circuit into the hot water store", async () => {
-    const legacy = {
-      ...FULL_CONFIG,
-      circuits: [...(FULL_CONFIG.circuits ?? []), { name: "Zirkulation", pump: "switch.zirkulationspumpe", temperature: "sensor.lambdawp_boil1_actual_circulation_temperature" }],
-      stores: (FULL_CONFIG.stores ?? []).map(({ circulation, circulation_pump, ...s }) => s)
-    };
-    const { root } = await mount({ ...legacy, sections: { stores: true } });
-    expect(text(root.querySelector(".section svg") as Element)).not.toContain("Zirkulation 34,3");
-    expect(root.querySelector(".section svg title")?.textContent).toContain("Zirkulation läuft");
-    expect(text(root.querySelector(".store") as Element)).toContain("Zirkulation 34,3 °C · läuft");
-  });
-
-  it("says how far below target a store is once nothing charges it", async () => {
-    const hass = makeHass({
-      [IDS.mode]: { entity_id: IDS.mode, state: "STBY", attributes: {} },
-      "sensor.lambdawp_boil1_actual_high_temperature": {
-        entity_id: "sensor.lambdawp_boil1_actual_high_temperature",
-        state: "46.0",
-        attributes: { unit_of_measurement: "°C" }
-      }
-    });
-    const { root } = await mount(WITH_STORES, hass);
-    expect(text(root.querySelector(".store") as Element)).toContain("2,5 K unter Soll");
+  it("names the store's empty and full ends in its tooltip", async () => {
+    const { root } = await mount(FULL_CONFIG);
+    const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");
+    expect(titles.find((t) => t.startsWith("Puffer"))).toContain("leer unter 30,0 °C · voll ab 50,0 °C");
+    expect(titles.find((t) => t.startsWith("Warmwasser"))).toContain("leer unter 40,0 °C · voll ab 57,5 °C");
   });
 });
 
 describe("general", () => {
-  it("shows only the chosen sections", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, sections: { flow: false, stores: false } });
-    expect(root.querySelector(".flow-dash")).toBeNull();
-    expect(root.querySelector(".store")).toBeNull();
-    expect(text(root)).toContain("Kurzläufe");
-  });
-
   it("warns plainly when the state sensor does not exist", async () => {
     const { root } = await mount({ type: "t", entities: { mode: "sensor.missing" } });
     expect(text(root)).toContain("sensor.missing");
@@ -331,7 +254,7 @@ describe("general", () => {
   it("speaks English where the dashboard does", async () => {
     const { root } = await mount(FULL_CONFIG, makeHass({}, "en"));
     expect(root.querySelector(".chip")?.textContent).toContain("Hot water");
-    expect(text(root)).toContain("Short runs");
+    expect(text(root.querySelector(".foot") as Element)).toContain("kW PV");
   });
 
   it("the compact form is one row: the state, the hot water temperature and today's thread", async () => {

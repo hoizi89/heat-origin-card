@@ -69,11 +69,7 @@ export const IDS = {
   heating_heat_today: "sensor.lambdawp_hp1_heating_thermal_energy_daily",
   heating_electric_today: "sensor.lambdawp_hp1_heating_energy_daily",
   hot_water_heat_today: "sensor.lambdawp_hp1_hot_water_thermal_energy_daily",
-  hot_water_electric_today: "sensor.lambdawp_hp1_hot_water_energy_daily",
-  cop_heating_month: "sensor.lambdawp_hp1_heating_cop_monthly",
-  cop_hot_water_month: "sensor.lambdawp_hp1_hot_water_cop_monthly",
-  cop_heating_year: "sensor.lambdawp_hp1_heating_cop_yearly",
-  cop_hot_water_year: "sensor.lambdawp_hp1_hot_water_cop_yearly"
+  hot_water_electric_today: "sensor.lambdawp_hp1_hot_water_energy_daily"
 };
 
 export function states(mode = "DHW"): Record<string, HassEntity> {
@@ -94,10 +90,6 @@ export function states(mode = "DHW"): Record<string, HassEntity> {
     entity(IDS.heating_electric_today, 2.44, "kWh"),
     entity(IDS.hot_water_heat_today, 12.5, "kWh"),
     entity(IDS.hot_water_electric_today, 3.05, "kWh"),
-    entity(IDS.cop_heating_month, 6.0),
-    entity(IDS.cop_hot_water_month, 5.1),
-    entity(IDS.cop_heating_year, 6.0),
-    entity(IDS.cop_hot_water_year, 4.42),
     entity("sensor.lambdawp_boil1_actual_high_temperature", 57.6, "°C"),
     entity("sensor.lambdawp_boil1_actual_low_temperature", 57.6, "°C"),
     entity("sensor.lambdawp_boil1_actual_circulation_temperature", 34.3, "°C"),
@@ -171,5 +163,5 @@ export const FULL_CONFIG: HeatOriginCardConfig = {
       volume: 300
     }
   ],
-  flow: { circuit_details: true, extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas", running_only: true }] }
+  flow: { extras: [{ entity: "sensor.lambdawp_hp1_hot_gas_temperature", name: "Heißgas", running_only: true }] }
 };

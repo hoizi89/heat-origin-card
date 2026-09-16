@@ -8,7 +8,6 @@ import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from ".
 import { cardStyles } from "./styles";
 import {
   buildDays,
-  hourlyMeans,
   lastRun,
   midnight,
   parseHistory,
@@ -36,7 +35,6 @@ import {
   localeOf,
   numberOf,
   powerKw,
-  scalePower,
   stateOf,
   unitOf
 } from "./values";
@@ -115,12 +113,6 @@ const COL_R = 196;
 const COL_GAP = 8;
 const R_COL_PUMP = 44;
 
-interface Tip {
-  x: number;
-  y: number;
-  text: TemplateResult;
-}
-
 type Shares = Partial<Record<ElectricSource, number>>;
 
 export class HeatOriginCard extends LitElement {
@@ -128,8 +120,6 @@ export class HeatOriginCard extends LitElement {
     hass: { attribute: false },
     _config: { state: true },
     _points: { state: true },
-    _pv: { state: true },
-    _tip: { state: true },
     _narrow: { state: true },
     _trend: { state: true }
   };
@@ -139,10 +129,8 @@ export class HeatOriginCard extends LitElement {
   hass?: HomeAssistant;
   private _config?: ResolvedConfig;
   private _points?: StatePoint[];
-  private _pv: Record<number, Array<number | undefined>> = {};
   /** Each store's own temperature over the last while, for how long it still lasts. */
   private _trend: Record<string, TrendPoint[]> = {};
-  private _tip?: Tip;
   private _narrow = false;
   private _fetchedAt = 0;
   private _fetching = false;
@@ -194,8 +182,7 @@ export class HeatOriginCard extends LitElement {
   }
 
   private _needsHistory(): boolean {
-    const c = this._config;
-    return Boolean(this.hass && c && (c.shape === "compact" || c.sections.day || c.sections.flow));
+    return Boolean(this.hass && this._config);
   }
 
   private async _fetch(): Promise<void> {
@@ -204,7 +191,7 @@ export class HeatOriginCard extends LitElement {
     if (!hass || !config) return;
     this._fetching = true;
     const now = new Date();
-    const start = new Date(midnight(now) - (config.day.days === 2 ? DAY : 0));
+    const start = new Date(midnight(now));
     try {
       const tops = config.stores.map((store) => store.top).filter(Boolean);
       const since = Date.now() - TREND_WINDOW;
@@ -238,28 +225,6 @@ export class HeatOriginCard extends LitElement {
       this._points = this._points ?? [];
     }
 
-    const solar = config.entities.solar;
-    if (solar && config.sections.day) {
-      try {
-        const stats = await hass.callWS({
-          type: "recorder/statistics_during_period",
-          start_time: start.toISOString(),
-          end_time: now.toISOString(),
-          statistic_ids: [solar],
-          period: "hour",
-          types: ["mean"]
-        });
-        const unit = unitOf(stateOf(hass, solar));
-        const pv: Record<number, Array<number | undefined>> = {};
-        for (let day = start.getTime(); day < now.getTime(); day += DAY) {
-          const dayStart = midnight(new Date(day + 3600000));
-          pv[dayStart] = hourlyMeans(stats, solar, dayStart).map((v) => (v === undefined ? undefined : scalePower(v, unit)));
-        }
-        this._pv = pv;
-      } catch {
-        this._pv = {};
-      }
-    }
     this._fetchedAt = Date.now();
     this._fetching = false;
   }
@@ -380,7 +345,7 @@ export class HeatOriginCard extends LitElement {
    */
   private _fromBuffer(): { store: ResolvedConfig["stores"][number]; circuits: number[] } | undefined {
     const config = this._config as ResolvedConfig;
-    if (!config.flow.bypass) return undefined;
+    if (config.flow.buffer_line === "none") return undefined;
     const store = config.stores.find((st) => st.kind === "buffer");
     if (!store) return undefined;
     if (this._mode().kind === "heating") return undefined;
@@ -495,24 +460,14 @@ export class HeatOriginCard extends LitElement {
     if (!this._points) return undefined;
     const mode = this._mode();
     const live = mode.raw !== undefined && mode.since !== undefined ? { state: mode.raw, at: mode.since } : undefined;
-    return buildDays(withLive(this._points, live), config.modes, new Date(), config.day.days, config.day.short_run);
+    // Today alone, and no run is too short to count: the starts in the foot are every start.
+    return buildDays(withLive(this._points, live), config.modes, new Date(), 1, 0);
   }
 
   private _hm(minutes: number) {
     const rounded = Math.round(minutes);
     const value = `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
     return html`${value}<small>${this._t("day.hours")}</small>`;
-  }
-
-  private _spanText(minutes: number): string {
-    const s = formatSpan(minutes);
-    return [
-      s.hours !== undefined ? `${s.hours} ${this._t("unit.h")}` : "",
-      s.minutes !== undefined ? `${s.minutes} ${this._t("unit.min")}` : "",
-      s.seconds !== undefined ? `${s.seconds} ${this._t("unit.s")}` : ""
-    ]
-      .filter(Boolean)
-      .join(" ");
   }
 
   // ─── render ────────────────────────────────────────────────
@@ -528,17 +483,10 @@ export class HeatOriginCard extends LitElement {
 
     if (config.shape === "compact") return this._renderCompact();
 
-    const blocks: Record<string, () => unknown> = {
-      flow: () => this._renderFlow(),
-      day: () => this._renderDay(),
-      stores: () => this._renderStores()
-    };
-
     return html`
       <ha-card class=${config.font === "system" ? "font-system" : ""}>
         ${this._renderHead()}
-        ${config.sections.order.filter((s) => config.sections[s]).map((s) => blocks[s]())}
-        ${this._tip ? html`<div class="tip" style="left:${this._tip.x}px;top:${this._tip.y}px">${this._tip.text}</div>` : nothing}
+        ${this._renderFlow()}
       </ha-card>
     `;
   }
@@ -570,7 +518,7 @@ export class HeatOriginCard extends LitElement {
           ? this._t("flow.bypass_to", { to: String(names[0]) })
           : this._t("flow.bypass_many", { n: String(names.length) });
       const floor = this._floor(carried.store);
-      const lasts = config.flow.range && config.flow.layout === "columns" ? this._lasts(carried.store, floor) : undefined;
+      const lasts = config.flow.buffer_line !== "line" && config.flow.layout === "columns" ? this._lasts(carried.store, floor) : undefined;
       chips.push(html`<span class="chip live" style="--tone:var(--ho-heating)"
         @click=${() => this._moreInfo(carried.store.top)}><i></i>${what}${lasts ? ` · ${lasts}` : ""}</span>`);
     }
@@ -618,7 +566,7 @@ export class HeatOriginCard extends LitElement {
       // Charging or discharging is the news and takes the slot. With nothing to report,
       // the store's own name is worth more there than the word "top" on every box.
       const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : store.name;
-      const fall = config.flow.trend ? this._fall(store) : undefined;
+      const fall = config.flow.trend !== "none" ? this._fall(store) : undefined;
       const moving = fall !== undefined && Math.abs(fall) >= config.forecast_min_slope;
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
       return {
@@ -642,7 +590,9 @@ export class HeatOriginCard extends LitElement {
                 scale: [digits(floor), digits(ceiling)] as [string, string]
               },
         loop: this._loopOf(store),
-        trend: moving ? { up: (fall as number) < 0, rate: `${this._one(Math.abs(fall as number))} K/h` } : undefined,
+        trend: moving
+          ? { up: (fall as number) < 0, rate: config.flow.trend === "rate" ? `${this._one(Math.abs(fall as number))} K/h` : undefined }
+          : undefined,
         hint: this._storeHint(store, floor, ceiling, usable)
       };
     });
@@ -658,12 +608,12 @@ export class HeatOriginCard extends LitElement {
       const buffered = Boolean(carried?.circuits.includes(index));
       const digits = (v: number | undefined) => (v === undefined ? "–" : `${formatTemp(v, locale)}°`);
       const spread = active && flow !== undefined && ret !== undefined ? `Δ ${this._one(flow - ret)} K` : undefined;
-      const origin = buffered && config.flow.origin ? this._t("flow.from_buffer") : undefined;
+      const origin = buffered && config.flow.buffer_line === "named" ? this._t("flow.from_buffer") : undefined;
       const resting = circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.off");
 
       // Twenty-five degrees in a room is neither good nor bad until something says what
       // was wanted there. The heat pump knows; the card only had to ask it.
-      const want = config.flow.target ? this._num(circuit.target_room) : undefined;
+      const want = face === "room" ? this._num(circuit.target_room) : undefined;
       const target =
         want === undefined || room === undefined
           ? undefined
@@ -679,10 +629,10 @@ export class HeatOriginCard extends LitElement {
 
       // A return line at rest is a number with nothing behind it. What the heating curve
       // is asking for is the one of the two that still says something.
-      const curveT = !active && config.flow.curve ? this._num(circuit.curve_flow) : undefined;
+      const curveT = !active && config.flow.resting === "curve" ? this._num(circuit.curve_flow) : undefined;
 
       // The room is what the circuit is for; flow and return are how it gets there.
-      if (face === "room" && room !== undefined) {
+      if (face !== "flow" && room !== undefined) {
         return {
           name: circuit.name,
           icon: circuit.icon,
@@ -697,7 +647,7 @@ export class HeatOriginCard extends LitElement {
             down: active ? digits(ret) : undefined,
             curve: curveT === undefined ? undefined : digits(curveT),
             curveLabel: curveT === undefined ? undefined : this._t("flow.curve"),
-            note: buffered && !config.flow.origin ? this._t("flow.bypass") : undefined,
+            note: buffered && !origin ? this._t("flow.bypass") : undefined,
             spread
           },
           target,
@@ -741,7 +691,8 @@ export class HeatOriginCard extends LitElement {
     const locale = this._locale;
     const parts = [store.name];
     if (usable !== undefined) parts.push(`${this._one(usable)} kWh ${this._t("stores.above", { t: formatTemp(floor, locale) })}`);
-    parts.push(`${formatTemp(floor, locale)}–${formatTemp(ceiling, locale)} °C`);
+    // The two ends the level is measured between, named: a bare range would leave that to guess.
+    parts.push(`${this._t("stores.empty", { t: formatTemp(floor, locale) })} · ${this._t("stores.full", { t: formatTemp(ceiling, locale) })}`);
     // Circulation draws from this store, so it is told here rather than given a box.
     if (store.circulation_pump) {
       const on = this._isOn(store.circulation_pump);
@@ -796,7 +747,7 @@ export class HeatOriginCard extends LitElement {
 
     if (config.flow.foot === "drive") return foot;
 
-    if (running && config.flow.spread) {
+    if (running && config.flow.foot === "full") {
       const flowT = this._num(config.entities.flow);
       const retT = this._num(config.entities.return);
       const volume = this._num(config.entities.volume_flow);
@@ -812,7 +763,7 @@ export class HeatOriginCard extends LitElement {
     if (!running) {
       const today = this._days()?.at(-1);
       if (today) {
-        if (config.flow.balance) {
+        if (config.flow.idle_foot === "balance") {
           // The middle of the circle already says when the last run was and how long it
           // lasted. Saying it twice costs the line that could carry the day instead.
           const minutes = (["heating", "hot_water", "cooling", "defrost"] as const)
@@ -916,7 +867,7 @@ export class HeatOriginCard extends LitElement {
     const rightCount = bufIx.length + circuits.length;
     const H = Math.max(rightY(rightCount - 1) + BOX_H_COL, leftY(hotIx.length - 1) + BOX_H_COL, cy + reach + 6) + 6;
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low", restColour: config.flow.rest_colour };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale === "show", restColour: config.flow.rest === "colour" };
     const parts: unknown[] = [];
 
     // The pump to hot water: out of the ring at half past seven, clear of the moon.
@@ -1008,7 +959,7 @@ export class HeatOriginCard extends LitElement {
 
     if (this._narrow) return this._renderFlowList(stores.concat(circuits), running);
 
-    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.detail !== "low", restColour: config.flow.rest_colour };
+    const style = { labels: config.flow.labels, gauge: config.flow.gauge, scale: config.flow.scale === "show", restColour: config.flow.rest === "colour" };
     const parts: unknown[] = [];
 
     stores.forEach((model, i) => {
@@ -1030,8 +981,8 @@ export class HeatOriginCard extends LitElement {
     if (carried && buffered.length) {
       const bufferIndex = config.stores.indexOf(carried.store);
       const floor = this._floor(carried.store);
-      const lasts = config.flow.range ? this._lasts(carried.store, floor) : undefined;
-      const kw = config.flow.range ? this._draw(carried.store) : undefined;
+      const lasts = config.flow.buffer_line !== "line" ? this._lasts(carried.store, floor) : undefined;
+      const kw = config.flow.buffer_line !== "line" ? this._draw(carried.store) : undefined;
       const label = [kw === undefined ? "" : `${formatPower(kw, this._locale)} kW`, lasts ?? ""].filter(Boolean).join(" · ");
       parts.push(bypass(leftEdge, midOf(bufferIndex), rightEdge, buffered, {
         cx, cy, ring: rRing, tone: TONE.heating, surface: PALETTE.surface,
@@ -1080,7 +1031,7 @@ export class HeatOriginCard extends LitElement {
     return dial(cx, cy, r, {
       segments,
       now: now.getHours() + now.getMinutes() / 60,
-      sun: config.flow.sun ? this._daylight() : undefined,
+      sun: config.flow.dial === "sun" ? this._daylight() : undefined,
       tone: PALETTE
     });
   }
@@ -1170,20 +1121,7 @@ export class HeatOriginCard extends LitElement {
     `;
   }
 
-  // ─── day band ──────────────────────────────────────────────
-
-  private _showTip(event: Event, text: TemplateResult) {
-    const card = this.shadowRoot?.querySelector("ha-card");
-    const target = event.currentTarget as Element | null;
-    if (!card || !target) return;
-    const box = card.getBoundingClientRect();
-    const r = target.getBoundingClientRect();
-    this._tip = { x: r.left + r.width / 2 - box.left, y: r.top - box.top, text };
-  }
-
-  private _hideTip() {
-    this._tip = undefined;
-  }
+  // ─── today as a thread ─────────────────────────────────────
 
   private _segmentFill(kind: Segment["kind"]): string {
     if (kind === "blocked") return "url(#ho-hatch)";
@@ -1202,287 +1140,6 @@ export class HeatOriginCard extends LitElement {
         <line x1="0" y1="0" x2="0" y2="4" stroke="var(--ho-defrost)" stroke-width="2"/>
       </pattern>
     </defs>`;
-  }
-
-  private _renderDay() {
-    const config = this._config as ResolvedConfig;
-    const days = this._days();
-    if (!days) {
-      return html`<div class="section"><div class="section-head"><span>${this._t("day.title")}</span></div><div class="loading">${this._t("day.loading")}</div></div>`;
-    }
-
-    const locale = this._locale;
-    const two = config.day.days === 2;
-    // A narrow card shrinks the drawing; its words must not shrink with it.
-    const ts = this._narrow ? 1.45 : 1;
-    const X0 = two ? 52 * ts : 4;
-    const X1 = W - 4;
-    const span = X1 - X0;
-    const hasPv = Boolean(config.entities.solar) && Object.values(this._pv).some((row) => row.some((v) => v !== undefined));
-    const PV_H = hasPv ? 18 : 0;
-    const STRIP = 13;
-    const ROW = PV_H + STRIP + 16 * ts;
-    const H = days.length * ROW + 14 * ts;
-    const pvMax = Math.max(1, ...Object.values(this._pv).flat().filter((v): v is number => v !== undefined));
-    const xh = (h: number) => X0 + (h / 24) * span;
-
-    const guides = [6, 12, 18].map(
-      (h) => svg`<line x1=${xh(h)} x2=${xh(h)} y1="2" y2=${H - 14 * ts} stroke="var(--ho-hairline)" stroke-width="1" stroke-dasharray="2 3"/>`
-    );
-
-    const rows = days.map((day, i) => {
-      const x = (t: number) => X0 + ((t - day.start) / DAY) * span;
-      const top = 4 + i * ROW;
-      const base = top + PV_H;
-      const stripY = base + 3;
-      const isToday = i === days.length - 1;
-
-      let pvPaths: TemplateResult | typeof nothing = nothing;
-      const pv = this._pv[day.start];
-      if (hasPv && pv) {
-        const pts = pv
-          .map((kw, h) => (kw === undefined ? undefined : ([x(day.start + h * 3600000 + 1800000), base - (Math.max(0, kw) / pvMax) * PV_H] as const)))
-          .filter((p): p is readonly [number, number] => p !== undefined);
-        if (pts.length > 1) {
-          const edge = pts.map(([px, py], k) => `${k ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ");
-          pvPaths = svg`
-            <path d="M${pts[0][0].toFixed(1)},${base} ${edge.replace(/^M/, "L")} L${pts[pts.length - 1][0].toFixed(1)},${base} Z" fill="var(--ho-sun)" opacity="0.18"/>
-            <path d=${edge} fill="none" stroke="var(--ho-sun)" stroke-width="1.5" stroke-linejoin="round"/>`;
-        }
-      }
-
-      const segs = day.segments.map((seg, k) => {
-        const prev = day.segments[k - 1];
-        const next = day.segments[k + 1];
-        const x0 = x(seg.from) + (prev && prev.to === seg.from ? 1 : 0);
-        const x1 = x(seg.to) - (next && next.from === seg.to ? 1 : 0);
-        const w = Math.max(2, x1 - x0);
-        const text = html`<b>${this._t(`kind.${seg.kind}`)}</b> ${clock(new Date(seg.from), locale)}–${clock(new Date(seg.to), locale)} · ${this._spanText((seg.to - seg.from) / 60000)}`;
-        return svg`<rect class="seg" tabindex="0" x=${x0} y=${stripY} width=${w} height=${STRIP} rx=${w > 6 ? 2 : 1}
-          fill=${this._segmentFill(seg.kind)}
-          @pointerenter=${(e: Event) => this._showTip(e, text)} @pointerleave=${this._hideTip}
-          @focus=${(e: Event) => this._showTip(e, text)} @blur=${this._hideTip}></rect>`;
-      });
-
-      const marks = day.shortRuns.map((run) => {
-        const text = html`<b>${this._t("day.short_run")}</b> ${clock(new Date(run.from), locale)} · ${this._t("day.short_run_text", {
-          kind: this._t(`kind.${run.kind}`),
-          span: this._spanText((run.to - run.from) / 60000)
-        })}`;
-        return svg`<path class="seg short-mark" tabindex="0" d="M${x(run.from) + 1},${stripY - 1} l-5,-8 h10 z" fill="var(--ho-warn)"
-          @pointerenter=${(e: Event) => this._showTip(e, text)} @pointerleave=${this._hideTip}
-          @focus=${(e: Event) => this._showTip(e, text)} @blur=${this._hideTip}></path>`;
-      });
-
-      const openToday = isToday && day.end < day.start + DAY;
-      return svg`
-        ${two ? svg`<text x="0" y=${stripY + 10} font-size=${10.5 * ts} fill="var(--ho-muted)">${this._t(isToday ? "day.today" : "day.yesterday")}</text>` : nothing}
-        ${pvPaths}
-        <rect x=${X0} y=${stripY} width=${span} height=${STRIP} rx="3" fill="var(--ho-track)"/>
-        ${openToday
-          ? svg`<rect x=${x(day.end)} y=${stripY} width=${Math.max(0, X1 - x(day.end))} height=${STRIP} rx="3" fill="var(--ho-surface)" stroke="var(--ho-track)" stroke-dasharray="2 3"/>`
-          : nothing}
-        ${segs}
-        ${marks}
-        ${openToday ? svg`<line x1=${x(day.end)} x2=${x(day.end)} y1=${stripY - 3} y2=${stripY + STRIP + 3} stroke="var(--ho-ink)" stroke-width="1.5"/>` : nothing}
-      `;
-    });
-
-    const axis = [0, 6, 12, 18, 24].map(
-      (h) =>
-        svg`<text x=${xh(h)} y=${H - 2} font-size=${9 * ts} fill="var(--ho-muted)" class="mono" text-anchor=${h === 0 ? "start" : h === 24 ? "end" : "middle"}>${String(h).padStart(2, "0")}</text>`
-    );
-
-    const today = days[days.length - 1];
-    const yesterday = two ? days[0] : undefined;
-    const kindsSeen = new Set(days.flatMap((d) => d.segments.map((s) => s.kind)));
-    const legendOrder: Segment["kind"][] = ["heating", "hot_water", "cooling", "defrost", "blocked"];
-    const third = today.minutes.cooling !== undefined && today.minutes.heating === undefined ? "cooling" : "heating";
-    const shortToday = today.shortRuns.length;
-    const shortYesterday = yesterday?.shortRuns.length ?? 0;
-
-    // Performance factors under the running times: today's from the energy
-    // counters, set against the month's (or the year's) so a change stands out.
-    const e = config.entities;
-    const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
-    const factor = (heat: number | undefined, electric: number | undefined) =>
-      heat !== undefined && electric !== undefined && electric > 0.05 ? heat / electric : undefined;
-    const perf = (today: number | undefined, month: number | undefined, year: number | undefined, entity: string | undefined) => {
-      const ref = month ?? year;
-      if (today === undefined && ref === undefined) return nothing;
-      const diff = today !== undefined && ref !== undefined ? today - ref : 0;
-      const arrow = Math.abs(diff) >= 0.5 ? (diff > 0 ? "▲" : "▼") : "";
-      return html`<span class="stat-sub clickable" @click=${() => this._moreInfo(entity)}>
-        ${today !== undefined
-          ? html`<span>${this._t("cop.az")} <b>${this._one(today)}</b>${arrow ? html`<i>${arrow}</i>` : nothing}</span>`
-          : nothing}
-        ${ref !== undefined ? html`<span>${this._t(month !== undefined ? "cop.month" : "cop.year")} ${this._one(ref)}</span>` : nothing}
-      </span>`;
-    };
-    const heatingPerf = perf(
-      factor(kwh(e.heating_heat_today), kwh(e.heating_electric_today)),
-      this._num(e.cop_heating_month),
-      this._num(e.cop_heating_year),
-      e.heating_heat_today ?? e.cop_heating_month ?? e.cop_heating_year
-    );
-    const waterPerf = perf(
-      factor(kwh(e.hot_water_heat_today), kwh(e.hot_water_electric_today)),
-      this._num(e.cop_hot_water_month),
-      this._num(e.cop_hot_water_year),
-      e.hot_water_heat_today ?? e.cop_hot_water_month ?? e.cop_hot_water_year
-    );
-    // Heat pumps that count only totals get one factor, under the starts.
-    const totalPerf =
-      heatingPerf === nothing && waterPerf === nothing ? perf(factor(kwh(e.heat_today), kwh(e.electric_today)), undefined, undefined, e.heat_today) : nothing;
-
-    return html`
-      <div class="section">
-        <div class="section-head"><span>${this._t("day.title")}</span></div>
-        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${this._t("day.title")}">
-          ${this._patterns()}
-          ${guides}
-          ${rows}
-          ${axis}
-        </svg>
-        <div class="legend">
-          ${legendOrder
-            .filter((k) => kindsSeen.has(k))
-            .map(
-              (k) => html`<span><i class="sw ${k === "blocked" ? "hatch" : k === "defrost" ? "defrost" : ""}"
-                  style=${k === "blocked" || k === "defrost" ? "" : `background:${TONE[k]}`}></i>${this._t(`kind.${k}`)}</span>`
-            )}
-          ${hasPv ? html`<span><i class="sw pv"></i>${this._t("day.pv")}</span>` : nothing}
-        </div>
-        <div class="stats">
-          <div class="stat"><span class="stat-k">${this._t("day.starts")}</span><span class="stat-v">${today.starts}</span>${totalPerf}</div>
-          ${config.day.short_run > 0
-            ? html`<div class="stat ${shortToday + shortYesterday > 0 ? "warn" : ""}">
-                <span class="stat-k">${this._t("day.short_runs")}</span>
-                <span class="stat-v"
-                  >${shortToday + shortYesterday > 0
-                    ? html`<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5 L13 12.5 H1 Z" fill="var(--ho-warn)"/></svg>`
-                    : nothing}${shortToday}${shortYesterday > 0 ? html`<small>${this._t("day.yesterday")} ${shortYesterday}</small>` : nothing}</span
-                >
-              </div>`
-            : nothing}
-          <div class="stat"><span class="stat-k">${this._t("kind.hot_water")}</span><span class="stat-v">${this._hm(today.minutes.hot_water ?? 0)}</span>${waterPerf}</div>
-          <div class="stat"><span class="stat-k">${this._t(`kind.${third}`)}</span><span class="stat-v">${this._hm(today.minutes[third] ?? 0)}</span>${third === "heating" ? heatingPerf : nothing}</div>
-        </div>
-        ${config.day.cycling_from > 0 && shortToday >= config.day.cycling_from
-          ? html`<div class="alert">
-              <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.5 L13 12.5 H1 Z" fill="none" stroke="var(--ho-warn)" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 5.5 V8.5 M7 10.4 V10.6" stroke="var(--ho-warn)" stroke-width="1.6" stroke-linecap="round"/></svg>
-              <span>${this._t("day.cycling", { n: String(shortToday) })}</span>
-            </div>`
-          : nothing}
-      </div>
-    `;
-  }
-
-  // ─── stores ────────────────────────────────────────────────
-
-  private _storeState(store: StoreConfig & { kind: StoreKind }, top: number | undefined): { text: string; tone: string } | undefined {
-    const mode = this._mode();
-    if ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"))
-      return { text: this._t("stores.charging"), tone: STORE_TONE[store.kind] };
-    if (top === undefined || !store.marks) return undefined;
-    const m = store.marks;
-    if (m.pv !== undefined && top >= m.pv) return { text: this._t("stores.pv_reached"), tone: "var(--ho-sun)" };
-    if (m.target !== undefined && top >= m.target) return { text: this._t("stores.target_reached"), tone: "var(--ho-ink)" };
-    if (m.eco !== undefined && top < m.eco) return { text: this._t("stores.below_eco"), tone: "var(--ho-warn)" };
-    if (m.target !== undefined)
-      return { text: this._t("stores.below", { k: this._one(m.target - top), mark: this._t("mark.target") }), tone: "var(--ho-warn)" };
-    return undefined;
-  }
-
-  private _renderStores() {
-    const config = this._config as ResolvedConfig;
-    if (!config.stores.length) return nothing;
-    const locale = this._locale;
-    let totalUsable = 0;
-    let anyVolume = false;
-    const ramp = (t: number, tone: string) => {
-      const p = Math.round(Math.min(1, Math.max(0, (t - 25) / 35)) * 100);
-      return `color-mix(in srgb, ${tone} ${p}%, var(--ho-cold))`;
-    };
-
-    const rows = config.stores.map((store) => {
-      const top = this._num(store.top);
-      const bottom = this._num(store.bottom);
-      const tone = STORE_TONE[store.kind];
-      const state = this._storeState(store, top);
-      const mean = top !== undefined && bottom !== undefined ? (top + bottom) / 2 : top;
-      const floor = store.usable_min ?? (store.kind === "hot_water" ? 40 : 30);
-      const ceiling = store.marks?.pv ?? store.marks?.max ?? store.marks?.target ?? 60;
-      // The tank is a level gauge: empty at the usable minimum, full at the highest mark.
-      const span = ceiling - floor;
-      const level = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - floor) / span)) : 0);
-      const pct = mean !== undefined ? level(mean) : undefined;
-      let energy: TemplateResult | typeof nothing = nothing;
-      if (store.volume && mean !== undefined) {
-        anyVolume = true;
-        const usable = Math.max(0, (store.volume * 1.163 * (mean - floor)) / 1000);
-        totalUsable += usable;
-        energy = html`<div class="store-energy">
-          <span class="store-kwh">${this._one(usable)}<small>kWh</small></span>
-          <span class="store-above">${this._t("stores.above", { t: formatNumber(floor, locale, floor % 1 ? 1 : 0) })}</span>
-        </div>`;
-      }
-      const ticks = (["eco", "target", "pv", "max"] as const)
-        .map((k) => store.marks?.[k])
-        .filter((v): v is number => v !== undefined && v > floor && v < ceiling)
-        .map((v) => html`<span class="tick" style="bottom:${(level(v) * 100).toFixed(1)}%"></span>`);
-      const layering = top !== undefined && bottom !== undefined ? top - bottom : undefined;
-      const sub =
-        bottom !== undefined
-          ? `${this._t("flow.bottom")} ${formatTemp(bottom, locale)} · ${layering !== undefined && Math.abs(layering) >= 0.5 ? `Δ ${this._one(layering)} K` : this._t("stores.even")}`
-          : undefined;
-      const loopTemp = this._temp(store.circulation);
-      const loopOn = store.circulation_pump ? this._isOn(store.circulation_pump) : undefined;
-      const circulation =
-        loopTemp !== undefined || loopOn !== undefined
-          ? html`<span class="store-sub ${loopOn ? "loop-on" : ""}">${this._t("stores.circulation")}${loopTemp !== undefined ? ` ${loopTemp} °C` : ""}${
-              loopOn !== undefined ? ` · ${this._t(loopOn ? "stores.circulation_on" : "stores.circulation_off")}` : ""
-            }</span>`
-          : nothing;
-      const marks = (["eco", "target", "pv", "max"] as const)
-        .filter((k) => store.marks?.[k] !== undefined)
-        .map((k) => {
-          const v = store.marks![k]!;
-          const reached = top !== undefined && top >= v;
-          return html`<span class="mark ${reached ? "reached" : ""}" style="--tone:${k === "pv" ? "var(--ho-sun)" : tone}"
-            >${this._t(`mark.${k}`)} ${formatNumber(v, locale, v % 1 ? 1 : 0)}</span
-          >`;
-        });
-
-      return html`<div class="store" @click=${() => this._moreInfo(store.top)}>
-        <div class="tank" role="img" aria-label="${store.name}${pct !== undefined ? `: ${formatNumber(pct * 100, locale, 0)} %` : ""}">
-          ${pct !== undefined
-            ? html`<span class="fill" style="height:${(pct * 100).toFixed(1)}%; background: linear-gradient(to top, ${ramp(bottom ?? top ?? 25, tone)}, ${ramp(top ?? 25, tone)})"></span>`
-            : nothing}
-          ${ticks}
-        </div>
-        <div class="store-info">
-          <span class="store-name">${store.name}</span>
-          <span class="store-temp">${top !== undefined ? formatTemp(top, locale) : "–"}<small>°C</small></span>
-          ${state ? html`<span class="store-state" style="color:${state.tone}">${state.text}</span>` : nothing}
-          ${sub ? html`<span class="store-sub">${sub}</span>` : nothing}
-          ${circulation}
-        </div>
-        ${energy}
-        ${marks.length ? html`<div class="marks">${marks}</div>` : nothing}
-      </div>`;
-    });
-
-
-    return html`
-      <div class="section">
-        <div class="section-head">
-          <span>${this._t("stores.title")}</span>
-          ${anyVolume ? html`<b>≈ ${this._one(totalUsable)} kWh ${this._t("stores.usable")}</b>` : nothing}
-        </div>
-        ${rows}
-      </div>
-    `;
   }
 
   // ─── compact ───────────────────────────────────────────────
