@@ -212,6 +212,40 @@ describe("the flow", () => {
     expect(lit.some((d) => d.includes("222"))).toBe(false);
   });
 
+  it("writes how long a discharging buffer can keep this up where its word stood, marked as the estimate it is", async () => {
+    const top = "sensor.lambdawp_buff1_actual_high_temperature";
+    const bottom = "sensor.lambdawp_buff1_actual_low_temperature";
+    const falling = (perHour: number) => {
+      const hass = makeHass({
+        [IDS.mode]: { entity_id: IDS.mode, state: "STBY", attributes: {}, last_changed: new Date(2026, 8, 15, 13, 39, 46).toISOString() },
+        "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} },
+        [top]: { entity_id: top, state: "48.0", attributes: { unit_of_measurement: "°C" } },
+        [bottom]: { entity_id: bottom, state: "47.0", attributes: { unit_of_measurement: "°C" } }
+      });
+      const plain = hass.callWS.bind(hass);
+      hass.callWS = async <T,>(message: Record<string, unknown>): Promise<T> => {
+        const ids = message.entity_ids as string[] | undefined;
+        if (message.type !== "history/history_during_period" || !ids?.includes(top)) return plain(message);
+        // Thirteen readings, five minutes apart, falling at the given rate for an hour.
+        const now = Date.now() / 1000;
+        const rows = Array.from({ length: 13 }, (_, i) => ({ lu: now - (12 - i) * 300, s: String(48 + perHour * ((12 - i) / 12)) }));
+        return { [top]: rows } as T;
+      };
+      return hass;
+    };
+    const slow = await mount(FULL_CONFIG, falling(0.6));
+    const label = (root: ShadowRoot) => {
+      const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("Puffer")) as Element;
+      return text(g);
+    };
+    // 47,5° mean over a floor of 25,8° at 0,6 K/h is thirty-six hours: a day or more, not a number.
+    expect(label(slow.root)).toContain("≈ NOCH > 1 TAG");
+    const fast = await mount(FULL_CONFIG, falling(2));
+    expect(label(fast.root)).toContain("≈ NOCH 10 H 50");
+    expect(fast.root.querySelector(".chip")?.textContent).toContain("noch 10 h 50");
+    expect([...fast.root.querySelectorAll(".section svg title")].some((t) => t.textContent?.includes("hochgerechnet"))).toBe(true);
+  });
+
   it("does not believe a circuit that says heating while its water sits at room temperature", async () => {
     const hass = makeHass({
       "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} },

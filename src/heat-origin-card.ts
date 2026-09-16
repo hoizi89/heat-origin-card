@@ -328,6 +328,8 @@ export class HeatOriginCard extends LitElement {
     if (mean === undefined) return undefined;
     const hours = hoursLeft(mean, floor, this._fall(store), config.forecast_min_slope);
     if (hours === undefined) return undefined;
+    // Past a day and a half the number would be a guess dressed up; "a day or more" is what is known.
+    if (hours > 36) return this._t("flow.lasts_long");
     return this._t("flow.lasts", { span: this._spanWords(hours) });
   }
 
@@ -602,9 +604,12 @@ export class HeatOriginCard extends LitElement {
           x.value !== undefined && x.value > floor && x.value < ceiling)
         .map((x) => ({ at: at(x.value), name: this._t(`mark.${x.key}`) }));
 
-      // Charging or discharging is the news and takes the slot. With nothing to report,
-      // the store's own name is worth more there than the word "top" on every box.
-      const word = charging ? this._t("flow.charging") : draining ? this._t("flow.discharging") : store.name;
+      // Charging or discharging is the news and takes the slot — and a discharging buffer
+      // has better news than the word: how long it can keep this up, carried forward from
+      // its own measured fall, marked as the estimate it is. With nothing to report, the
+      // store's own name is worth more there than the word "top" on every box.
+      const lasts = draining ? this._lasts(store, floor) : undefined;
+      const word = charging ? this._t("flow.charging") : draining ? (lasts ? `≈ ${lasts}` : this._t("flow.discharging")) : store.name;
       // Which way the store is going, off a whole hour: a tenth of a kelvin at a time is
       // all a resting buffer moves, and the arrow says "holding" rather than nothing.
       const drift = config.flow.trend !== "none" ? this._drift(store) : undefined;
@@ -643,7 +648,7 @@ export class HeatOriginCard extends LitElement {
             : Math.abs(drift) < DRIFT_MIN
               ? { dir: "flat" }
               : { dir: drift > 0 ? "down" : "up", rate: config.flow.trend === "rate" ? `${this._one(Math.abs(drift))} K/h` : undefined },
-        hint: this._storeHint(store, floor, ceiling, usable)
+        hint: this._storeHint(store, floor, ceiling, usable) + (lasts ? ` · ${this._t("forecast.how")}` : "")
       };
     });
 
