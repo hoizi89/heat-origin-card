@@ -278,6 +278,23 @@ export const cardStyles = css`
     background: color-mix(in srgb, var(--tone) 14%, transparent);
   }
 
+  .sink .n {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .sink .n small {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--ho-muted);
+  }
+
+  .sink.active .n small {
+    color: var(--tone);
+  }
+
   .sink .v {
     font-family: var(--ho-mono);
     font-size: 11.5px;

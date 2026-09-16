@@ -42,7 +42,9 @@ import {
 const DAY = 86400000;
 const REFRESH = 5 * 60 * 1000;
 const W = 368;
-const NARROW = 340;
+/** Under this many pixels the drawing gives way to a list. Scaled down to 300 the drawing
+ *  still reads better than any list; below that its small words are gone. */
+const NARROW = 300;
 
 const TONE: Record<ModeKind, string> = {
   heating: "var(--ho-heating)",
@@ -1143,8 +1145,10 @@ export class HeatOriginCard extends LitElement {
         <div class="sinks">
           ${models.map(
             (m) => html`<div class="sink ${m.on ? "active" : ""}" style="--tone:${m.tone}" title=${m.hint ?? m.name}>
-              <span>${m.name}</span>
-              <span class="v">${[m.value, m.valueRight, m.pair?.up].filter(Boolean).join(" · ")}</span>
+              <span class="n">${m.name}<small>${m.label}${m.target ? ` · ${m.target.text} ${m.target.off}` : ""}</small></span>
+              <span class="v">${[m.value, m.valueRight ? `${m.valueRight} ${m.labelRight ?? ""}`.trim() : undefined, m.pair?.up ? `↑ ${m.pair.up}` : undefined]
+                .filter(Boolean)
+                .join(" · ")}</span>
             </div>`
           )}
         </div>
