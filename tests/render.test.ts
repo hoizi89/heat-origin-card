@@ -205,6 +205,25 @@ describe("the flow", () => {
     // The heat pump is making hot water; the floor loop is taking it from the buffer.
     const chips = [...root.querySelectorAll(".chip")].map((c) => c.textContent?.replace(/\s+/g, " ") ?? "");
     expect(chips.some((c) => c.includes("Puffer → FBH EG"))).toBe(true);
+    // Heat runs down the manifold only as far as the circuit that takes it: the second
+    // branch, at 222, stays on the grey track and off the lit path.
+    const lit = [...root.querySelectorAll(".section svg path.flow-dash")].map((p) => p.getAttribute("d") ?? "");
+    expect(lit.some((d) => d.includes("134"))).toBe(true);
+    expect(lit.some((d) => d.includes("222"))).toBe(false);
+  });
+
+  it("does not believe a circuit that says heating while its water sits at room temperature", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} },
+      "sensor.lambdawp_hc1_flow_line_temperature": { entity_id: "sensor.lambdawp_hc1_flow_line_temperature", state: "22.9", attributes: { unit_of_measurement: "°C" } },
+      "sensor.lambdawp_hc1_return_line_temperature": { entity_id: "sensor.lambdawp_hc1_return_line_temperature", state: "23.0", attributes: { unit_of_measurement: "°C" } }
+    });
+    const { root } = await mount(FULL_CONFIG, hass);
+    // A pump against a closed mixer: no spread, no heat, so the buffer carries nothing
+    // and the scale does not take 22,9° for empty.
+    expect([...root.querySelectorAll(".chip")].some((c) => c.textContent?.includes("Puffer →"))).toBe(false);
+    const titles = [...root.querySelectorAll(".section svg title")].map((t) => t.textContent ?? "");
+    expect(titles.find((t) => t.startsWith("Puffer"))).toContain("leer unter 30,0 °C");
   });
 
   it("leaves the spread out when asked", async () => {

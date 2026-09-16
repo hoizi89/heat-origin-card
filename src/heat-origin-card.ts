@@ -355,10 +355,19 @@ export class HeatOriginCard extends LitElement {
     return this._t("store.due_in", { mark, span: this._spanWords(hours) });
   }
 
+  /**
+   * Whether a circuit is taking heat. The state or the pump says it wants to; the water
+   * says whether it does. A pump can run against a closed mixer — the state reads
+   * HEATING while flow and return sit at room temperature — and then no heat moves,
+   * the buffer is not carrying anything, and the circuit is not warming the house.
+   */
   private _circuitActive(circuit: ResolvedConfig["circuits"][number]): boolean {
     const raw = stateOf(this.hass, circuit.state)?.state;
     const pumpOn = circuit.pump ? this._isOn(circuit.pump) : undefined;
-    return pumpOn ?? circuitActive(raw, circuit.active);
+    if (!(pumpOn ?? circuitActive(raw, circuit.active))) return false;
+    const flow = this._num(circuit.flow);
+    const ret = this._num(circuit.return);
+    return flow === undefined || ret === undefined || flow - ret >= 0.3;
   }
 
   /**
@@ -934,12 +943,12 @@ export class HeatOriginCard extends LitElement {
     // The manifold: every circuit hangs on one upright under the buffer.
     const circuitYs = circuits.map((_, i) => rightY(bufIx.length + i) + BOX_H_COL / 2);
     if (circuitYs.length) {
-      const anyTaking = circuits.some((c) => c.on);
       parts.push(spine(COL_R, headY, COL_R, circuitYs, {
         tone: TONE.heating,
         surface: PALETTE.surface,
         track: PALETTE.track,
-        live: anyTaking && (Boolean(carried) || (running && mode.kind === "heating"))
+        live: Boolean(carried) || (running && mode.kind === "heating"),
+        taking: circuits.map((c) => c.on)
       }));
     }
 

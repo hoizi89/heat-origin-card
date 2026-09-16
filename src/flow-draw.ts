@@ -178,8 +178,9 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
     );
     afterValue = ax + 5;
     const room = rx - afterValue - (m.valueRight === undefined ? 0 : textWidth(m.valueRight, S.small));
-    const wide = m.loop ? 0 : 1;
-    if (m.trend.rate && room > textWidth(m.trend.rate, S.micro) + 40 * wide) {
+    // The circulation, where there is one, takes the middle of this row: leave it its room.
+    const reserve = m.loop ? 40 : 0;
+    if (m.trend.rate && room > textWidth(m.trend.rate, S.micro) + reserve) {
       parts.push(svg`<text x=${afterValue + 4} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.trend.rate}</text>`);
       afterValue += 4 + textWidth(m.trend.rate, S.micro);
     }
@@ -480,23 +481,37 @@ export function bypass(fromX: number, fromY: number, toX: number, ys: number[], 
  * which is what the house does, and why this arrangement needs no special case for a
  * discharging buffer.
  */
+/**
+ * The manifold: one upright from the head, a branch to every circuit. Heat runs down it
+ * only as far as the lowest circuit that is taking any, and only into those branches;
+ * the rest of the pipe stays drawn, grey, so the house keeps its shape.
+ */
 export function spine(fromX: number, fromY: number, toX: number, ys: number[], o: {
   tone: string;
   surface: string;
+  /** Whether anything is being pushed into the upright at all. */
   live: boolean;
+  /** For each y, whether that circuit is taking heat. */
+  taking?: boolean[];
   track: string;
 }) {
   const sx = toX - 13;
-  const last = ys[ys.length - 1];
   const r = 6;
-  let d = `M${fromX} ${fromY} H${sx + r} Q${sx} ${fromY} ${sx} ${fromY + r} V${last - r} Q${sx} ${last} ${sx + r} ${last} H${toX}`;
-  for (const y of ys.slice(0, -1)) d += ` M${sx} ${y} H${toX}`;
-
-  const nodes = ys.slice(0, -1).map((y) => svg`<circle cx=${sx} cy=${y} r="3" fill=${o.live ? o.tone : o.track}/>`);
-  if (!o.live) {
-    return svg`<path d=${d} fill="none" stroke=${o.track} stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${nodes}`;
-  }
+  const path = (list: number[]) => {
+    const last = list[list.length - 1];
+    let d = `M${fromX} ${fromY} H${sx + r} Q${sx} ${fromY} ${sx} ${fromY + r} V${last - r} Q${sx} ${last} ${sx + r} ${last} H${toX}`;
+    for (const y of list.slice(0, -1)) d += ` M${sx} ${y} H${toX}`;
+    return d;
+  };
+  const taking = ys.filter((_, i) => o.taking?.[i] ?? true);
+  const lit = o.live && taking.length > 0;
+  const all = path(ys);
+  const nodes = ys.slice(0, -1).map((y) => svg`<circle cx=${sx} cy=${y} r="3" fill=${lit && y <= taking[taking.length - 1] ? o.tone : o.track}/>`);
+  const track = svg`<path d=${all} fill="none" stroke=${o.track} stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  if (!lit) return svg`${track}${nodes}`;
+  const d = path(taking);
   return svg`
+    ${track}
     <path d=${d} fill="none" stroke=${o.surface} stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
     <path d=${d} fill="none" stroke=${o.tone} stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
     <path d=${d} fill="none" stroke="#fff" stroke-width="2.2" opacity="0.8" class="flow-dash"/>
