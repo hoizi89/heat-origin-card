@@ -90,7 +90,7 @@ flow:
 | `stores[].circulation`, `circulation_pump` | | The circulation line's temperature and pump. Circulation draws from the hot water store and gives nothing back, so it belongs to that store rather than to a circuit of its own; a circuit named or marked as circulation is moved there. |
 | `stores[].due_at` | `eco` | Which mark the measured cooling is counted down to. The line names that mark rather than promising a start: what the heat pump does when it gets there is its own business, and a surplus of sun may have it charge long before. |
 | `forecast_min_slope` | `0.4` | Kelvin per hour; below this measured fall the card says nothing about how long a store lasts and draws no trend. |
-| `flow.layout` | `columns` | `columns`: the heat pump heads the left column with hot water under it, the heating group — the buffer, then its circuits — owns the right one. `split`: stores left, circuits right, the heat pump between them. |
+| `layout` | `columns` | `columns`: the heat pump heads the left column with hot water under it, the heating group — the buffer, then its circuits — owns the right one. `split`: stores left, circuits right, the heat pump between them. |
 | `flow.centre` | `heat` | What the circle reads while the heat pump runs: `power`, or `both` — then the performance factor moves into the foot. |
 | `flow.ring` | `sun` | The day's dial with the hours of daylight arcing over it; `plain` without them; `shares` no dial. While it runs, the shares of ambient heat and electricity ring the circle in any case. |
 | `flow.labels` | `short` | Symbol with the storey under it; `icon` for the symbol alone, `name` for the name. |

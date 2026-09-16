@@ -150,7 +150,7 @@ describe("the flow", () => {
   });
 
   it("keeps the circulation out of the narrower split box, where it would not fit", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
+    const { root } = await mount({ ...FULL_CONFIG, layout: "split" });
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser"));
     // At 116 px the figures leave no gap between them, so it falls back to the tooltip.
     expect(text(hotWater as Element)).toContain("Soll");
@@ -159,7 +159,7 @@ describe("the flow", () => {
   });
 
   it("splits stores left of the heat pump and circuits right when asked", async () => {
-    const { root } = await mount({ ...FULL_CONFIG, flow: { layout: "split" } });
+    const { root } = await mount({ ...FULL_CONFIG, layout: "split" });
     const x = (name: string) => boxX(root, name);
     expect(x("Warmwasser")).toBeLessThan(100);
     expect(x("Puffer")).toBeLessThan(100);

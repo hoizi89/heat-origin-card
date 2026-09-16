@@ -54,6 +54,15 @@ describe("configuration", () => {
     expect(resolveConfig({ ...bare, flow: { resting: "flow", curve: true } }).flow.curve).toBe(true);
   });
 
+  it("takes the layout at the card's root, where the editor writes it, and still under flow where 1.0 kept it", () => {
+    expect(resolveConfig({ ...bare, layout: "split" }).flow.layout).toBe("split");
+    expect(resolveConfig({ ...bare, flow: { layout: "split" } }).flow.layout).toBe("split");
+    expect(resolveConfig({ ...bare, layout: "columns", flow: { layout: "split" } }).flow.layout).toBe("columns");
+    const data = editorData({ ...bare, flow: { layout: "split" } });
+    expect(data.layout).toBe("split");
+    expect(data.flow).not.toHaveProperty("layout");
+  });
+
   it("shows the editor every choice at the word the card uses, and drops what earlier versions wrote", () => {
     const data = editorData({
       ...bare,

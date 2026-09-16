@@ -158,13 +158,7 @@ export interface ExtraFigure {
  * that is.
  */
 export interface FlowOptions {
-  /**
-   * `columns`: the heat pump heads the left column with hot water under it, and the
-   * heating group — the buffer, then the circuits it feeds — owns the right one. Two
-   * things beside each other instead of three, so the boxes are half again as wide and
-   * the buffer's line to its circuits is a run down the column. `split`: stores left,
-   * circuits right, the heat pump between them.
-   */
+  /** @deprecated The layout is the card's own key now. */
   layout?: "columns" | "split";
   /** Any further figures worth a glance in the foot, e.g. hot gas or compressor speed. */
   extras?: ExtraFigure[];
@@ -217,6 +211,14 @@ export interface FlowOptions {
 export interface HeatOriginCardConfig {
   type: string;
   title?: string;
+  /**
+   * `columns`: the heat pump heads the left column with hot water under it, and the
+   * heating group — the buffer, then the circuits it feeds — owns the right one. Two
+   * things beside each other instead of three, so the boxes are half again as wide and
+   * the buffer's line to its circuits is a run down the column. `split`: stores left,
+   * circuits right, the heat pump between them.
+   */
+  layout?: "columns" | "split";
   shape?: CardShape;
   entities: HeatOriginEntities;
   modes?: ModeWords;

@@ -71,7 +71,7 @@ export const SWITCHES = ["curve", "scale", "balance", "rest_colour"] as const;
  * What earlier versions wrote is read once more here and lands on what it meant, so an
  * older YAML keeps its look; the editor writes the current keys from then on.
  */
-function resolveFlow(flow: FlowOptions): ResolvedFlow {
+function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
   const low = flow.detail === "low";
   const legacyBuffer = flow.bypass === false ? "none" : flow.origin ? "named" : flow.range === false ? "line" : "range";
   const legacyFoot = low ? "drive" : flow.spread === false ? "no_spread" : "full";
@@ -80,7 +80,8 @@ function resolveFlow(flow: FlowOptions): ResolvedFlow {
   const legacyRing = flow.ring === "shares" ? "shares" : flow.dial === "plain" || flow.sun === false ? "plain" : "sun";
   const on = (value: boolean | undefined, word: string | undefined, off: string) => value ?? (word === undefined ? true : word !== off);
   return {
-    layout: oneOf(flow.layout, CHOICES.layout, "columns"),
+    // The layout is the card's, and the editor writes it at the root; `flow.layout` is where 1.0 kept it.
+    layout: oneOf(layout ?? flow.layout, CHOICES.layout, "columns"),
     extras: flow.extras ?? [],
     labels: oneOf(flow.labels, CHOICES.labels, low ? "icon" : "short"),
     circuit: oneOf(flow.circuit, CHOICES.circuit, flow.target === false ? "room_plain" : "room"),
@@ -107,7 +108,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     entities: config.entities,
     modes: resolveModes(config.modes),
     ...foldCirculation(config),
-    flow: resolveFlow(config.flow ?? {}),
+    flow: resolveFlow(config.flow ?? {}, config.layout),
     forecast_min_slope: config.forecast_min_slope ?? 0.4,
     source: config.source === "ground" || config.source === "water" ? config.source : "air",
     grid_invert: config.grid_invert ?? false,
@@ -116,7 +117,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   };
 }
 
-const LEGACY_FLOW_KEYS = ["spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
+const LEGACY_FLOW_KEYS = ["layout", "spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
 const LEGACY_CARD_KEYS = ["sections", "day"] as const;
 
 /**
@@ -133,9 +134,10 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig {
   for (const key of LEGACY_CARD_KEYS) delete card[key];
   const flow: Record<string, unknown> = { ...(config.flow ?? {}) };
   for (const key of LEGACY_FLOW_KEYS) delete flow[key];
-  const { extras: _extras, ...choices } = resolved.flow;
+  const { extras: _extras, layout, ...choices } = resolved.flow;
   return {
     ...(card as unknown as HeatOriginCardConfig),
+    layout,
     font: resolved.font,
     source: resolved.source,
     shape: resolved.shape,
