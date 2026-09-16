@@ -367,7 +367,8 @@ export class HeatOriginCard extends LitElement {
     if (!(pumpOn ?? circuitActive(raw, circuit.active))) return false;
     const flow = this._num(circuit.flow);
     const ret = this._num(circuit.return);
-    return flow === undefined || ret === undefined || flow - ret >= 0.3;
+    // Half a kelvin: a closed mixer hovers within three tenths of nothing, a floor that heats runs two to five.
+    return flow === undefined || ret === undefined || flow - ret >= 0.5;
   }
 
   /**
