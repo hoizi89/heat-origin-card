@@ -1,7 +1,7 @@
 import { guessCircuitIcon, guessShort, guessStoreIcon, isIconName, type IconName } from "./icons";
 import { localize } from "./localize";
 import { resolveModes } from "./modes";
-import type { CircuitConfig, FlowOptions, HeatOriginCardConfig, ResolvedConfig, ResolvedFlow, StoreConfig, StoreKind } from "./types";
+import type { CircuitConfig, FlowOptions, FootItem, FootStyle, HeatOriginCardConfig, ResolvedConfig, ResolvedFlow, StoreConfig, StoreKind } from "./types";
 
 export const CARD_TYPE = "heat-origin-card";
 
@@ -62,12 +62,24 @@ export const CHOICES = {
   centre: ["heat", "power", "both"],
   foot: ["full", "no_spread", "drive", "none"],
   buffer_line: ["range", "line", "none"],
-  running: ["pair", "quiet", "headline", "flow", "stack"],
+  running: ["pair", "quiet", "headline", "flow", "stack", "spread"],
+  rest_note: ["last", "target", "none"],
   store_head: ["word", "left", "draw"]
 } as const;
 
 /** The switches: two looks each. All but the curve are on by default. */
-export const SWITCHES = ["curve", "scale", "balance", "rest_colour"] as const;
+export const SWITCHES = ["curve", "scale", "balance", "rest_colour", "chips"] as const;
+
+/** Every part of the foot line, in the order it is written. */
+export const FOOT_ITEMS: readonly FootItem[] = ["power", "ambient", "buffer", "due", "pump", "volume", "day", "extras"];
+
+/** What each of the foot's earlier words kept; a YAML without `foot_items` still reads as it did. */
+const FOOT_PRESETS: Record<FootStyle, readonly FootItem[]> = {
+  full: FOOT_ITEMS,
+  no_spread: FOOT_ITEMS.filter((item) => item !== "pump" && item !== "volume"),
+  drive: ["power", "ambient", "buffer", "due"],
+  none: []
+};
 
 /**
  * What earlier versions wrote is read once more here and lands on what it meant, so an
@@ -81,6 +93,9 @@ function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
   // 1.0.0 had the dial's two ends as `ring: both|clock` plus `dial`; 0.9 as `sun`.
   const legacyRing = flow.ring === "shares" ? "shares" : flow.dial === "plain" || flow.sun === false ? "plain" : "sun";
   const on = (value: boolean | undefined, word: string | undefined, off: string) => value ?? (word === undefined ? true : word !== off);
+  // A foot asked for in full with the spread switched off, as 0.9 wrote it, is a foot without the spread.
+  const foot = flow.foot === "full" && flow.spread === false ? "no_spread" : oneOf(flow.foot, CHOICES.foot, legacyFoot);
+  const picked = flow.foot_items;
   return {
     // The layout is the card's, and the editor writes it at the root; `flow.layout` is where 1.0 kept it.
     layout: oneOf(layout ?? flow.layout, CHOICES.layout, "columns"),
@@ -94,12 +109,17 @@ function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
     trend: oneOf(flow.trend, CHOICES.trend, legacyTrend ?? "rate"),
     ring: oneOf(flow.ring, CHOICES.ring, legacyRing),
     centre: oneOf(flow.centre, CHOICES.centre, "heat"),
-    // A foot asked for in full with the spread switched off, as 0.9 wrote it, is a foot without the spread.
-    foot: flow.foot === "full" && flow.spread === false ? "no_spread" : oneOf(flow.foot, CHOICES.foot, legacyFoot),
+    chips: flow.chips ?? true,
+    foot,
+    // Picked one by one, the list is the whole answer — an empty one included.
+    foot_items: Array.isArray(picked) ? FOOT_ITEMS.filter((item) => picked.includes(item)) : [...FOOT_PRESETS[foot]],
     balance: on(flow.balance, flow.idle_foot, "last"),
     // 1.5 had a fourth word, `named`, that wrote "from the buffer" into the circuit; the line says it.
     buffer_line: oneOf(flow.buffer_line, CHOICES.buffer_line, legacyBuffer),
     running: oneOf(flow.running, CHOICES.running, "pair"),
+    // A circuit switched off for the summer is nowhere near its target and not meant to be;
+    // when it last heated is what still says something. The plain room of 1.x wrote nothing.
+    rest_note: oneOf(flow.rest_note, CHOICES.rest_note, flow.circuit === "room_plain" || flow.target === false ? "none" : "last"),
     store_head: oneOf(flow.store_head, CHOICES.store_head, "left"),
     rest_colour: on(flow.rest_colour, flow.rest, "grey")
   };
@@ -109,6 +129,7 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
   return {
     type: config.type,
     title: config.title,
+    show_title: config.show_title !== false,
     shape: config.shape === "compact" ? "compact" : "standard",
     entities: config.entities,
     modes: resolveModes(config.modes),
@@ -119,11 +140,13 @@ export function resolveConfig(config: HeatOriginCardConfig): ResolvedConfig {
     source: config.source === "ground" || config.source === "water" ? config.source : "air",
     grid_invert: config.grid_invert ?? false,
     battery_invert: config.battery_invert ?? false,
-    font: config.font === "mono" ? "mono" : "system"
+    font: config.font === "mono" ? "mono" : "system",
+    pv_mode_above: typeof config.pv_mode_above === "number" && config.pv_mode_above >= 0 ? config.pv_mode_above : 1.5,
+    pv_mode_own: config.pv_mode_own === true
   };
 }
 
-const LEGACY_FLOW_KEYS = ["layout", "spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
+const LEGACY_FLOW_KEYS = ["layout", "foot", "spread", "sun", "target", "bypass", "range", "origin", "detail", "circuit_details", "resting", "dial", "idle_foot", "rest"] as const;
 const LEGACY_CARD_KEYS = ["sections", "day"] as const;
 
 /** `stores[1]` is `store_1` to the form: ha-form reaches into objects by key, never into a list by index. */
@@ -147,7 +170,8 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
   delete card.circuits;
   const flow: Record<string, unknown> = { ...(config.flow ?? {}) };
   for (const key of LEGACY_FLOW_KEYS) delete flow[key];
-  const { extras: _extras, layout, ...choices } = resolved.flow;
+  // The foot's one word became a list of its parts; the form writes the list.
+  const { extras: _extras, foot: _foot, layout, ...choices } = resolved.flow;
   // Every circuit and store as its own key, and one empty slot after each list: filled
   // in, it becomes the next entry; left empty, it is dropped on the way back.
   const circuits = config.circuits ?? [];
@@ -160,6 +184,7 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
     ...(card as unknown as HeatOriginCardConfig),
     layout,
     wide_from: resolved.wide_from,
+    show_title: resolved.show_title,
     font: resolved.font,
     source: resolved.source,
     shape: resolved.shape,
@@ -271,7 +296,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
       title: t("editor.group_general"),
       expanded: true,
       schema: [
-        text("title"),
+        grid([text("title"), { name: "show_title", selector: { boolean: {} } }]),
         // The layout's words are long; they get the row to themselves.
         choice("layout"),
         grid([words("shape", ["standard", "compact"]), words("font", ["system", "mono"])]),
@@ -287,7 +312,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
         { name: "mode", required: true, selector: sensor },
         grid(
           [
-            "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop",
+            "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop", "pv_mode",
             "heating_heat_today", "heating_electric_today", "hot_water_heat_today", "hot_water_electric_today", "heat_today", "electric_today"
           ].map((name) => ({ name, selector: sensor }))
         )
@@ -300,7 +325,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     { type: "expandable", name: "flow", title: t("editor.group_pump"), schema: [choice("centre"), choice("ring")] },
     ...circuits.map(circuitForm),
     circuitForm(undefined, circuits.length),
-    { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), choice("running"), toggle("curve")] },
+    { type: "expandable", name: "flow", title: t("editor.group_circuits"), schema: [choice("circuit"), choice("running"), choice("rest_note"), toggle("curve")] },
     ...stores.map(storeForm),
     storeForm(undefined, stores.length),
     {
@@ -313,20 +338,29 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
       type: "expandable",
       name: "flow",
       title: t("editor.group_boxes"),
-      schema: [choice("labels"), toggle("rest_colour"), choice("foot"), toggle("balance")]
+      schema: [
+        choice("labels"),
+        toggle("rest_colour"),
+        toggle("chips"),
+        {
+          name: "foot_items",
+          selector: { select: { multiple: true, mode: "list", options: FOOT_ITEMS.map((value) => ({ value, label: t(`editor.foot_items_${value}`) })) } }
+        },
+        toggle("balance")
+      ]
     }
   ];
 
   const labelled = [
-    "title", "layout", "shape", "font", "source", "wide_from", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
-    "house_power", "grid_power", "battery_power", "cop", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
+    "title", "show_title", "layout", "shape", "font", "source", "wide_from", "mode", "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar",
+    "house_power", "grid_power", "battery_power", "cop", "pv_mode", "heating_heat_today", "heating_electric_today", "hot_water_heat_today",
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
-    "scale", "trend", "rest_colour", "buffer_line", "foot", "balance", "running", "store_head",
+    "scale", "trend", "rest_colour", "buffer_line", "foot_items", "chips", "balance", "running", "rest_note", "store_head",
     "name", "kind", "top", "bottom", "volume", "usable_min", "usable_max", "circulation", "circulation_pump", "due_at",
     "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
-  const helped = ["mode", "source", "wide_from", "volume", "usable_min", "usable_max", "eco", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance"];
+  const helped = ["show_title", "pv_mode", "mode", "source", "wide_from", "volume", "usable_min", "usable_max", "eco", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance", "chips", "foot_items", "rest_note"];
 
   return {
     schema,

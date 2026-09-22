@@ -35,10 +35,19 @@ export type RingStyle = "sun" | "plain" | "shares";
 export type CentreValue = "heat" | "power" | "both";
 /** How much of the foot line is kept. */
 export type FootStyle = "full" | "no_spread" | "drive" | "none";
+/**
+ * The parts of the foot line, each one kept or dropped on its own: the electricity and
+ * where it comes from, the ambient heat (the outdoor temperature at rest), what the
+ * circuits pull from the buffer, when hot water is due, the heat pump's flow and return,
+ * its volume flow, the day's figures at rest, and the extras.
+ */
+export type FootItem = "power" | "ambient" | "buffer" | "due" | "pump" | "volume" | "day" | "extras";
 /** What is drawn while a buffer carries the circuits on its own. */
 export type BufferLine = "range" | "line" | "none";
 /** How a running circuit's box is arranged: what stands right of the room, and what under it. */
-export type RunningFace = "pair" | "quiet" | "headline" | "flow" | "stack";
+export type RunningFace = "pair" | "quiet" | "headline" | "flow" | "stack" | "spread";
+/** What a resting circuit writes under its room: when it last heated, the room's target, or nothing. */
+export type RestNote = "last" | "target" | "none";
 /** What a discharging store writes where its word would stand. */
 export type StoreHead = "word" | "left" | "draw";
 /** Where the ambient heat comes from. */
@@ -78,6 +87,11 @@ export interface HeatOriginEntities {
   battery_power?: string;
   /** A live COP the integration computes; without it the card divides heat by electricity. */
   cop?: string;
+  /**
+   * Whether the heat pump runs on surplus solar: a switch or binary sensor that is on,
+   * or the surplus power it is sent (Lambda's E-Manager), counted from `pv_mode_above`.
+   */
+  pv_mode?: string;
   /** The day's heat and electricity per mode, for the day's performance factor in the foot. */
   heating_heat_today?: string;
   heating_electric_today?: string;
@@ -185,8 +199,12 @@ export interface FlowOptions {
   ring?: RingStyle | "both" | "clock";
   /** What the middle of the circle reads while the heat pump runs. */
   centre?: CentreValue;
-  /** How much of the line under the drawing is kept. */
+  /** The badges in the head: what the heat pump does and since when, and a buffer carrying the house. */
+  chips?: boolean;
+  /** How much of the line under the drawing is kept. `foot_items` decides where it is written. */
   foot?: FootStyle;
+  /** The parts of the line under the drawing, picked one by one. An empty list is no line. */
+  foot_items?: FootItem[];
   /** While the heat pump stands: the day's starts, running time and performance factor in place of the last run. */
   balance?: boolean;
   /** While a buffer carries the circuits alone: the line with its remaining time, the line alone, or nothing. `named` from 1.5 reads as `range`. */
@@ -195,9 +213,12 @@ export interface FlowOptions {
    * A running circuit, right of its room: `pair` the flow and what the curve wants of
    * it, return and spread under; `quiet` the same with nothing under; `headline` the
    * curve's ask as the word above, flow and return right; `flow` the flow as the figure
-   * with the room beside it; `stack` flow, curve and return in three rows.
+   * with the room beside it; `stack` flow, curve and return in three rows; `spread`
+   * flow, spread and the curve's ask in three rows.
    */
   running?: RunningFace;
+  /** Under a resting circuit's room: when it last heated (`last`), the room's target and how far off (`target`), or nothing. */
+  rest_note?: RestNote;
   /** A discharging store's word: `word` says discharging, `left` how long it can keep this up, `draw` the power going out and where to. */
   store_head?: StoreHead;
   /** A resting box keeps its symbol in its own colour instead of greying out with its state. */
@@ -227,6 +248,8 @@ export interface FlowOptions {
 export interface HeatOriginCardConfig {
   type: string;
   title?: string;
+  /** The card's own title. Off where the dashboard already names the section: the head then carries PV mode, when on, and since when. */
+  show_title?: boolean;
   /**
    * `columns`: the heat pump heads the left column with hot water under it, and the
    * heating group — the buffer, then the circuits it feeds — owns the right one. Two
@@ -246,6 +269,10 @@ export interface HeatOriginCardConfig {
   battery_invert?: boolean;
   /** Figures in the dashboard's own face (default) or in monospace. */
   font?: "system" | "mono";
+  /** kW of surplus from which `entities.pv_mode` means the heat pump runs on solar. 1.5 by default, Lambda's own minimum. */
+  pv_mode_above?: number;
+  /** `entities.pv_mode` is a bare export figure, measured after the heat pump's own draw: add that draw back, and hold through short dips. */
+  pv_mode_own?: boolean;
   /** Kelvin per hour; below this measured fall no remaining time is shown. */
   forecast_min_slope?: number;
   /**
@@ -267,10 +294,13 @@ export interface ResolvedFlow {
   trend: TrendStyle;
   ring: RingStyle;
   centre: CentreValue;
+  chips: boolean;
   foot: FootStyle;
+  foot_items: FootItem[];
   balance: boolean;
   buffer_line: BufferLine;
   running: RunningFace;
+  rest_note: RestNote;
   store_head: StoreHead;
   rest_colour: boolean;
 }
@@ -278,6 +308,7 @@ export interface ResolvedFlow {
 export interface ResolvedConfig {
   type: string;
   title: string | undefined;
+  show_title: boolean;
   shape: CardShape;
   entities: HeatOriginEntities;
   modes: Required<ModeWords>;
@@ -291,6 +322,8 @@ export interface ResolvedConfig {
   grid_invert: boolean;
   battery_invert: boolean;
   font: "system" | "mono";
+  pv_mode_above: number;
+  pv_mode_own: boolean;
 }
 
 declare global {

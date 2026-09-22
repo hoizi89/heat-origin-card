@@ -1,12 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { resolveModes } from "../src/modes";
-import { buildDays, hourlyMeans, midnight, parseHistory, withLive } from "../src/timeline";
+import { buildDays, hourlyMeans, lastActive, lastRun, midnight, parseHistory, withLive } from "../src/timeline";
 import { IDS, historyResponse, statisticsResponse } from "./fixtures";
 
 const words = resolveModes(undefined);
 const points = parseHistory(historyResponse(IDS.mode), IDS.mode);
 const now = new Date(2026, 8, 15, 13, 40, 0);
 const t = (day: number, h: number, m: number, s = 0) => new Date(2026, 8, day, h, m, s).getTime();
+
+describe("the last run", () => {
+  const day = (states: Array<[string, number]>) =>
+    buildDays(
+      states.map(([state, hour]) => ({ state, at: new Date(2026, 8, 18, hour, 0).getTime() })),
+      words,
+      new Date(2026, 8, 18, 12, 0),
+      1,
+      120
+    )[0];
+
+  it('is named after what the heat pump did last, not after its longest part', () => {
+    // An hour of heating, then twenty minutes of hot water: one run, ending on hot water.
+    const today = day([["STBY", 4], ["CH", 5], ["DHW", 6], ["STBY", 7]]);
+    const last = lastRun(today);
+    expect(last?.kind).toBe("hot_water");
+    expect(last?.from).toBe(new Date(2026, 8, 18, 5, 0).getTime());
+    expect(last?.lastFrom).toBe(new Date(2026, 8, 18, 6, 0).getTime());
+    expect(last?.to).toBe(new Date(2026, 8, 18, 7, 0).getTime());
+  });
+
+  it('is the run itself where it did one thing only', () => {
+    const last = lastRun(day([["STBY", 4], ["CH", 5], ["STBY", 8]]));
+    expect(last?.kind).toBe("heating");
+    expect(last?.lastFrom).toBe(last?.from);
+  });
+});
+
+describe("when a circuit last heated", () => {
+  const heating = (s: string) => s === "HEATING";
+  const p = (state: string, at: number) => ({ state, at });
+
+  it("is the moment its last run ended, not a restart in the middle of it", () => {
+    expect(lastActive([p("OFF", 1), p("HEATING", 2), p("unknown", 3), p("HEATING", 4), p("CH-SUMMER", 5), p("OFF", 6)], heating)).toBe(5);
+  });
+
+  it("is now while it runs, and nothing when the history holds no run", () => {
+    expect(lastActive([p("OFF", 1), p("HEATING", 2)], heating)).toBe("now");
+    expect(lastActive([p("OFF", 1), p("unavailable", 2), p("OFF", 3)], heating)).toBeUndefined();
+    expect(lastActive([], heating)).toBeUndefined();
+  });
+});
 
 describe("the day band from the real Lambda history", () => {
   const [yesterday, today] = buildDays(points, words, now, 2, 120);

@@ -80,7 +80,12 @@ const looks: Array<[string, Partial<HeatOriginCardConfig>]> = [
   ["default", {}],
   ["thermometer, curve, names", { flow: { gauge: "scale", curve: true, labels: "name" } }],
   ["bar, box", { flow: { gauge: "bar" } }],
+  ["filled, large figures", { flow: { gauge: "box", running: "spread" } }],
+  ["split, filled", { layout: "split", flow: { gauge: "box" } }],
   ["split", { layout: "split" }],
+  ["flow, spread, target", { flow: { running: "spread" } }],
+  ["room target at rest", { flow: { rest_note: "target" } }],
+  ["split, flow, spread, target", { layout: "split", flow: { running: "spread" } }],
   ["split thermometer", { layout: "split", flow: { gauge: "scale", curve: true } }],
   ["wide", { wide_from: 1 }],
   ["wide thermometer, curve", { wide_from: 1, flow: { gauge: "scale", curve: true } }]

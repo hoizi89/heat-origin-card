@@ -32,6 +32,8 @@ export interface BoxModel {
   /** The word over the figure on the right, if there is one. */
   labelRight?: string;
   valueRight?: string;
+  /** The unit written small right after `valueRight`, so the figure and what it counts read as one. */
+  unitRight?: string;
   /** A store: where its level stands, and where its layering ends. */
   level?: {
     top: number;
@@ -49,7 +51,7 @@ export interface BoxModel {
    * heat is moving — or what the heating curve is asking for, which is the only one of
    * the two that says anything while the circuit rests.
    */
-  pair?: { up: string; down?: string; curve?: string; curveLabel?: string; note?: string; spread?: string };
+  pair?: { up: string; down?: string; curve?: string; curveLabel?: string; curveTone?: string; note?: string; spread?: string; mid?: string };
   /** The room this circuit was asked for, and how far it is from it. */
   target?: { text: string; off: string; tone: string };
   /** Which way a store is going, from its own measured fall. */
@@ -131,11 +133,26 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   const rx = x + w - 9;
 
   if (m.level && style.gauge === "box") {
+    // The level is read against the scale written under it, whose ends stand at the
+    // figures' left edge and the box's right margin — not against the whole box. So
+    // 50° between 40° and 60° sits over the middle of those two numbers; the symbol
+    // column left of the scale is filled as soon as there is anything to fill.
+    const fillTo = (level: number) => (level <= 0 ? x : tx + (rx - tx) * Math.min(1, level));
+
     const clip = `ho-fill-${uid}`;
     parts.push(svg`<defs><clipPath id=${clip}><rect x=${x} y=${y} width=${w} height=${h} rx=${R_BOX}/></clipPath></defs>
+      <pattern id=${`${clip}-room`} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke=${m.tone} stroke-width="2" opacity="0.14"/>
+      </pattern>
       <g clip-path=${`url(#${clip})`}>
-        <rect x=${x} y=${y} width=${(w * m.level.top).toFixed(1)} height=${h} fill=${m.tone} opacity="0.2"/>
-        <rect x=${x} y=${y} width=${(w * m.level.bottom).toFixed(1)} height=${h} fill=${m.tone} opacity="0.2"/>
+        <rect x=${x} y=${y} width=${(fillTo(m.level.top) - x).toFixed(1)} height=${h} fill=${m.tone} opacity="0.2"/>
+        <rect x=${x} y=${y} width=${(fillTo(m.level.bottom) - x).toFixed(1)} height=${h} fill=${m.tone} opacity="0.2"/>
+        ${m.level.top < 0.995
+          ? svg`<rect x=${fillTo(m.level.top).toFixed(1)} y=${y} width=${(x + w - fillTo(m.level.top)).toFixed(1)} height=${h} fill=${`url(#${clip}-room)`}/>`
+          : nothing}
+        ${m.level.top > 0.005 && m.level.top < 0.995
+          ? svg`<line x1=${fillTo(m.level.top).toFixed(1)} x2=${fillTo(m.level.top).toFixed(1)} y1=${y} y2=${y + h} stroke=${m.tone} stroke-width="2" opacity="0.9"/>`
+          : nothing}
       </g>`);
   }
 
@@ -150,26 +167,46 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   // The word on the left may use what the unit on the right leaves; a name too long
   // for a narrow box is cut, not written over it.
   const spaced = (s: string) => textWidth(s, S.micro) + 0.09 * S.micro * s.length;
-  const labelRoom = rx - tx - (m.labelRight ? spaced(m.labelRight) + 8 : 0);
+  // The word on the right explains the figure under it; it gives way before the box's
+  // own name is cut, since the unit beside the figure still says what it counts.
+  const labelRight = m.labelRight && spaced(m.label) + 8 + spaced(m.labelRight) <= rx - tx ? m.labelRight : undefined;
+  const labelRoom = rx - tx - (labelRight ? spaced(labelRight) + 8 : 0);
   let shown = m.label;
   while (shown.length > 3 && spaced(shown) > labelRoom) shown = `${shown.replace(/…$/, "").slice(0, -1).trimEnd()}…`;
   const labelPart = label(shown, tx, "start", m.labelTone ?? t.muted);
   parts.push(labelPart);
-  if (m.labelRight) parts.push(label(m.labelRight, rx, "end", t.muted));
+  if (labelRight) parts.push(label(labelRight, rx, "end", t.muted));
 
-  parts.push(svg`<text x=${tx} y=${y + S.val} font-size=${S.figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
+  // A store filled in its own colour has no bar under its figures, and the two rows the
+  // bar and its scale took are free: the figures step up a size and move into the middle.
+  // Where the box is too narrow for both at the larger size, the unit goes first, then
+  // the size: the two figures never touch.
+  const fits = (fig: number, sid: number, unit: number) =>
+    tx + textWidth(m.value, fig) + 22 < rx - (m.valueRight === undefined ? 0 : textWidth(m.valueRight, sid) + unit);
+  const unitFull = m.unitRight ? 3 + textWidth(m.unitRight, S.micro) : 0;
+  const big = Boolean(m.level) && style.gauge === "box" && (fits(S.figure * 1.45, S.small * 1.35, 0));
+  const filled = big;
+  const figure = filled ? S.figure * 1.45 : S.figure;
+  const side = filled ? S.small * 1.35 : S.small;
+  const valY = filled ? S.val + 8 : S.val;
+  parts.push(svg`<text x=${tx} y=${y + valY} font-size=${figure} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.value}</text>`);
+  const unitW = unitFull && fits(figure, side, unitFull) ? unitFull : 0;
+  const rightW = m.valueRight === undefined ? 0 : textWidth(m.valueRight, side) + unitW;
   if (m.valueRight !== undefined) {
-    parts.push(svg`<text x=${rx} y=${y + S.val} text-anchor="end" font-size=${S.small} font-weight="600"
+    parts.push(svg`<text x=${rx - unitW} y=${y + valY} text-anchor="end" font-size=${side} font-weight="600"
       fill=${m.level && m.on ? t.ink : t.muted}>${m.valueRight}</text>`);
+    if (m.unitRight && unitW) {
+      parts.push(svg`<text x=${rx} y=${y + valY} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.unitRight}</text>`);
+    }
   }
 
   // The card measures a store's fall for its forecast anyway; the arrow says which way
   // it is going for the price of seven pixels. The rate follows only where it fits,
   // because the direction is the part that is read at a glance.
-  let afterValue = tx + textWidth(m.value, S.figure);
+  let afterValue = tx + textWidth(m.value, figure);
   if (m.trend) {
     const ax = afterValue + 11;
-    const ay = y + S.val - 4;
+    const ay = y + valY - (filled ? 6 : 4);
     // Rising in the store's own colour, falling grey, holding a flat grey arrow.
     parts.push(
       m.trend.dir === "flat"
@@ -178,11 +215,12 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
         : arrow(ax, ay, m.trend.dir === "up", m.trend.dir === "up" ? m.tone : t.muted)
     );
     afterValue = ax + 5;
-    const room = rx - afterValue - (m.valueRight === undefined ? 0 : textWidth(m.valueRight, S.small));
+    const room = rx - afterValue - rightW;
     // The circulation, where there is one, takes the middle of this row: leave it its room.
     const reserve = m.loop ? 40 : 0;
-    if (m.trend.rate && room > textWidth(m.trend.rate, S.micro) + reserve) {
-      parts.push(svg`<text x=${afterValue + 4} y=${y + S.val} font-size=${S.micro} fill=${t.muted}>${m.trend.rate}</text>`);
+    // A clear gap before the figure on the right, or the rate reads as part of it.
+    if (m.trend.rate && room > textWidth(m.trend.rate, S.micro) + reserve + 12) {
+      parts.push(svg`<text x=${afterValue + 4} y=${y + valY} font-size=${S.micro} fill=${t.muted}>${m.trend.rate}</text>`);
       afterValue += 4 + textWidth(m.trend.rate, S.micro);
     }
   }
@@ -192,12 +230,12 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (m.loop && w >= 150) {
     const lt = m.loop.on ? m.tone : t.muted;
     const leftEnd = afterValue;
-    const rightStart = m.valueRight === undefined ? rx : rx - textWidth(m.valueRight, S.small);
+    const rightStart = rx - rightW;
     const width = 13 + textWidth(m.loop.text, S.small);
     const lx = (leftEnd + rightStart) / 2 - width / 2;
     if (lx > leftEnd + 6 && lx + width < rightStart - 6) {
-      parts.push(icon("loop", lx, y + S.val - 9, lt, 0.65));
-      parts.push(svg`<text x=${lx + 14} y=${y + S.val} font-size=${S.small} fill=${lt}>${m.loop.text}</text>`);
+      parts.push(icon("loop", lx, y + valY - 9, lt, 0.65));
+      parts.push(svg`<text x=${lx + 14} y=${y + valY} font-size=${S.small} fill=${lt}>${m.loop.text}</text>`);
     }
   }
 
@@ -223,15 +261,21 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       parts.push(arrow(ax, y + S.aUp, true, tone));
       parts.push(svg`<text x=${rx} y=${y + S.up} text-anchor="end" font-size=${S.small} font-weight="600" fill=${m.on ? t.ink : t.muted}>${m.pair.up}</text>`);
     }
+    // A row between the flow and the curve's ask: the spread, which pushes the ask a row down.
+    const drop = m.pair.mid ? 17 : 0;
+    if (m.pair.mid) {
+      parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.mid}</text>`);
+    }
     if (m.pair.curve) {
       // At rest a return line is a number with nothing behind it. What the curve wants
       // is the figure that still means something, so it takes that place and says so —
       // by name where the name fits between it and the figure on the left.
       const labelX = rx - textWidth(m.pair.curve, S.small) - 6;
       const labelW = textWidth((m.pair.curveLabel ?? ""), S.micro);
-      parts.push(svg`<text x=${rx} y=${y + S.down} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.curve}</text>`);
-      if (m.pair.curveLabel && labelX - labelW > tx + textWidth(m.value, S.figure) + 6) {
-        parts.push(svg`<text x=${labelX} y=${y + S.down} text-anchor="end" font-size=${S.micro} fill=${t.muted}>${m.pair.curveLabel}</text>`);
+      parts.push(svg`<text x=${rx} y=${y + S.down + drop} text-anchor="end" font-size=${S.small} fill=${t.muted}>${m.pair.curve}</text>`);
+      // A row down, the figure on the left is no longer in the way of the name.
+      if (m.pair.curveLabel && labelX - labelW > tx + (drop ? 0 : textWidth(m.value, S.figure) + 6)) {
+        parts.push(svg`<text x=${labelX} y=${y + S.down + drop} text-anchor="end" font-size=${S.micro} font-weight=${m.pair.curveTone ? 700 : 400} fill=${m.pair.curveTone ?? t.muted}>${m.pair.curveLabel}</text>`);
       }
       // Both the curve's ask and the return: the return takes a third row under them.
       if (m.pair.down) {
@@ -254,7 +298,7 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
   if (m.target && tx + micro(m.target.text) <= rx) {
     parts.push(svg`<text x=${tx} y=${y + S.note} font-size=${S.micro} fill=${t.muted}>${m.target.text}</text>`);
     noteEnd = tx + micro(m.target.text);
-    if (noteEnd + 7 + micro(m.target.off) <= rx) {
+    if (m.target.off && noteEnd + 7 + micro(m.target.off) <= rx) {
       parts.push(svg`<text x=${noteEnd + 7} y=${y + S.note} font-size=${S.micro} font-weight="700" fill=${m.target.tone}>${m.target.off}</text>`);
       noteEnd += 7 + micro(m.target.off);
     }
@@ -317,11 +361,13 @@ export function box(m: BoxModel, x: number, y: number, w: number, h: number, t: 
       parts.push(svg`<line x1=${mx} x2=${mx} y1=${by - 2} y2=${by + bh + 2} stroke=${t.surface} stroke-width="1.4"/>`);
     }
     parts.push(svg`<rect x=${(tx + bw * m.level.top - 1.2).toFixed(1)} y=${by - 4} width="2.4" height=${bh + 8} rx="1" fill=${t.ink}/>`);
+    // The two ends first: a thermometer without its numbers is a guess. A set-point's
+    // name that would run into one gives way; its notch stays, and the tooltip names it.
     const wanted: Array<{ x: number; text: string; anchor: "start" | "middle" | "end" }> = [];
     if (style.scale && m.level.scale) wanted.push({ x: tx, text: m.level.scale[0], anchor: "start" });
-    for (const mark of m.level.marks) wanted.push({ x: tx + bw * mark.at, text: mark.name, anchor: "middle" });
     const end = [m.level.ceilingName, style.scale ? m.level.scale?.[1] : undefined].filter(Boolean).join(" ");
     if (end) wanted.push({ x: rx, text: end, anchor: "end" });
+    for (const mark of m.level.marks) wanted.push({ x: tx + bw * mark.at, text: mark.name, anchor: "middle" });
     parts.push(...row(wanted, y + S.scale, S.micro, t.muted, x + 4, x + w - 4));
   }
 

@@ -100,7 +100,7 @@ describe("the flow", () => {
   });
 
   it("turns a room reading into an answer by naming the room that was asked for", async () => {
-    const { root } = await mount(FULL_CONFIG);
+    const { root } = await mount({ ...FULL_CONFIG, flow: { rest_note: "target" } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
     const t = text(eg as Element);
     // 24,5 in a room asked to be 22,5 is two kelvin too warm — which is why it rests.
@@ -109,7 +109,7 @@ describe("the flow", () => {
   });
 
   it("shows a resting circuit its room and target alone: standing water has nothing to say", async () => {
-    const { root } = await mount(FULL_CONFIG);
+    const { root } = await mount({ ...FULL_CONFIG, flow: { rest_note: "target" } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
     const t = text(eg as Element);
     expect(t).toContain("Soll 22,5°");
@@ -123,10 +123,177 @@ describe("the flow", () => {
     expect(text(eg as Element)).toContain("25,8° 30,6° VL-Soll");
   });
 
+  it("says when a resting circuit last heated instead of a target it is not meant to reach", async () => {
+    const hass = makeHass();
+    const HOUR = 3600_000;
+    const at = (ms: number) => Math.round(ms / 1000);
+    const threeDays = Date.now() - 3 * 24 * HOUR;
+    const lastNight = new Date();
+    lastNight.setHours(0, 0, 0, 0);
+    const answer = (message: Record<string, unknown>) => ({
+      [IDS.mode]: [],
+      "sensor.lambdawp_hc1_operating_state": [
+        { s: "CH-SUMMER", lu: at(threeDays - 6 * HOUR) },
+        { s: "HEATING", lu: at(lastNight.getTime() - 2 * HOUR) },
+        // A restart in the middle of a run ends nothing.
+        { s: "unavailable", lu: at(lastNight.getTime() - 90 * 60_000) },
+        { s: "HEATING", lu: at(lastNight.getTime() - 89 * 60_000) },
+        { s: "CH-SUMMER", lu: at(lastNight.getTime() - HOUR) }
+      ],
+      "sensor.lambdawp_hc2_operating_state": [
+        { s: "HEATING", lu: at(threeDays - HOUR) },
+        { s: "OFF", lu: at(threeDays) }
+      ],
+      _: message
+    });
+    const plain = hass.callWS.bind(hass);
+    hass.callWS = (async (message: Record<string, unknown>) =>
+      (message.entity_ids as string[] | undefined)?.includes("sensor.lambdawp_hc2_operating_state")
+        ? answer(message)
+        : plain(message)) as typeof hass.callWS;
+    const { root } = await mount(FULL_CONFIG, hass);
+    const words = (name: string) => text([...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes(name)) as Element);
+    expect(words("FBH EG")).toContain("zuletzt gestern 23:00");
+    expect(words("FBH EG")).not.toContain("Soll 22,5°");
+    expect(words("Heizkörper OG")).toContain("zuletzt vor 3 Tagen");
+    // Switched off, nothing under the room at all.
+    const none = await mount({ ...FULL_CONFIG, flow: { rest_note: "none" } }, hass);
+    const og = text([...none.root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Heizkörper OG")) as Element);
+    expect(og).not.toContain("zuletzt");
+    expect(og).not.toContain("Soll");
+  });
+
   it("leaves the target out when asked for the plain room", async () => {
     const { root } = await mount({ ...FULL_CONFIG, flow: { circuit: "room_plain" } });
     const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG"));
     expect(text(eg as Element)).not.toContain("Soll");
+  });
+
+  it("marks surplus solar once, by the title, and the flow target it raised", async () => {
+    const surplus = (watts: number, own = 1725) =>
+      makeHass({
+        "sensor.emgr": { entity_id: "sensor.emgr", state: String(watts), attributes: { unit_of_measurement: "W" } },
+        [IDS.electric_power]: { entity_id: IDS.electric_power, state: String(own), attributes: { unit_of_measurement: "W" } },
+        "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} }
+      });
+    // A bare export figure, so the heat pump's own draw is added back.
+    const config = { ...FULL_CONFIG, pv_mode_own: true, entities: { ...FULL_CONFIG.entities, pv_mode: "sensor.emgr" }, flow: { running: "spread" as const, chips: false } };
+    // 150 W left over while the compressor draws 1,4 kW of the sun: that is PV mode.
+    const sunny = await mount(config, surplus(150, 1400));
+    expect(text(sunny.root.querySelector(".head .title") as Element)).toContain("PV");
+    const eg = [...sunny.root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG")) as Element;
+    expect(text(eg)).toContain("PV-Soll");
+    // Only by the title and at the raised target: the stores' own words stay as they were.
+    const stores = [...sunny.root.querySelectorAll(".section svg g")].filter((g) => /Warmwasser|Puffer/.test(g.textContent ?? ""));
+    for (const store of stores) expect(text(store)).not.toMatch(/·\s*PV/);
+    // Under Lambda's own minimum of 1,5 kW, counted with the heat pump's own draw, it is no solar mode.
+    const dull = await mount(config, surplus(100, 1000));
+    expect(dull.root.querySelector(".head .pv")).toBeNull();
+    const egDull = [...dull.root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG")) as Element;
+    expect(text(egDull)).toContain("VL-Soll");
+    // The heat pump's own set-point is taken as it is: the draw is not added to nought at night.
+    const setpoint = { ...config, pv_mode_own: false };
+    expect((await mount(setpoint, surplus(0, 1900))).root.querySelector(".head .pv")).toBeNull();
+    expect((await mount(setpoint, surplus(1500, 1400))).root.querySelector(".head .pv")).not.toBeNull();
+  });
+
+  it("says since yesterday rather than a bare time that reads as tonight", async () => {
+    const lastNight = new Date();
+    lastNight.setHours(0, 0, 0, 0);
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": {
+        entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {}, last_changed: new Date(lastNight.getTime() - 60_000).toISOString()
+      }
+    });
+    const { root } = await mount(FULL_CONFIG, hass);
+    const eg = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("FBH EG")) as Element;
+    expect(text(eg)).toContain("HEIZT");
+    expect(text(eg)).not.toContain("HEIZT · 23:59");
+    expect(text(eg)).toContain("seit gestern 23:59");
+  });
+
+  it("leaves the title to the dashboard when asked, and says in its place since when the sun runs the heat pump", async () => {
+    const at = new Date();
+    at.setHours(0, 0, 0, 0);
+    const morning = at.getTime() + 10 * 3600_000;
+    const hass = makeHass({
+      "sensor.emgr_set": { entity_id: "sensor.emgr_set", state: "1839", attributes: { unit_of_measurement: "W" } }
+    });
+    const plain = hass.callWS.bind(hass);
+    hass.callWS = (async (message: Record<string, unknown>) => {
+      const answer = (await plain(message)) as Record<string, unknown>;
+      if ((message.entity_ids as string[] | undefined)?.includes("sensor.emgr_set")) {
+        answer["sensor.emgr_set"] = [
+          { s: "0", lu: at.getTime() / 1000 },
+          { s: "1500", lu: morning / 1000 },
+          { s: "2400", lu: morning / 1000 + 600 }
+        ];
+      }
+      return answer;
+    }) as typeof hass.callWS;
+    const config = { ...FULL_CONFIG, show_title: false, entities: { ...FULL_CONFIG.entities, pv_mode: "sensor.emgr_set" }, flow: { chips: false } };
+    const { root } = await mount(config, hass);
+    expect(root.querySelector(".head .title")).toBeNull();
+    const line = text(root.querySelector(".head .pv-mode") as Element);
+    expect(line).toContain("PV-Betrieb");
+    expect(line).toContain("seit 10:00");
+    // Nothing to say, no head at all.
+    const dark = makeHass({ "sensor.emgr_set": { entity_id: "sensor.emgr_set", state: "0", attributes: { unit_of_measurement: "W" } } });
+    expect((await mount(config, dark)).root.querySelector(".head")).toBeNull();
+  });
+
+  it("says when a buffer charging on the sun is full, and draws no arrow beside the word that says it charges", async () => {
+    const TOP = "sensor.lambdawp_buff1_actual_high_temperature";
+    const climbing = (pv: number) => {
+      const hass = makeHass({
+        [IDS.mode]: { entity_id: IDS.mode, state: "CH", attributes: {} },
+        [TOP]: { entity_id: TOP, state: "46", attributes: { unit_of_measurement: "°C" } },
+        "sensor.lambdawp_buff1_actual_low_temperature": { entity_id: "sensor.lambdawp_buff1_actual_low_temperature", state: "44", attributes: {} },
+        "sensor.pv_set": { entity_id: "sensor.pv_set", state: String(pv), attributes: { unit_of_measurement: "W" } }
+      });
+      const plain = hass.callWS.bind(hass);
+      hass.callWS = (async (message: Record<string, unknown>) => {
+        const answer = (await plain(message)) as Record<string, unknown>;
+        if ((message.entity_ids as string[] | undefined)?.includes(TOP)) {
+          // Twelve kelvin an hour over the last quarter of an hour.
+          const now = Date.now() / 1000;
+          answer[TOP] = [0, 1, 2, 3].map((i) => ({ s: String(43 + i), lu: now - (15 - 5 * i) * 60 }));
+        }
+        return answer;
+      }) as typeof hass.callWS;
+      return hass;
+    };
+    const config = { ...FULL_CONFIG, entities: { ...FULL_CONFIG.entities, pv_mode: "sensor.pv_set" }, flow: { gauge: "box" as const } };
+    const sunny = await mount(config, climbing(2400));
+    const buffer = [...sunny.root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("PU")) as Element;
+    expect(text(buffer)).toMatch(/LÄDT · VOLL ≈ \d\d:\d\d/);
+    expect(text(buffer)).not.toContain("K/h");
+    // Off the sun the heat pump stops somewhere the card does not know: no time.
+    const dull = await mount(config, climbing(0));
+    const plain = [...dull.root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("PU")) as Element;
+    expect(text(plain)).toContain("LÄDT");
+    expect(text(plain)).not.toContain("VOLL");
+  });
+
+  it("drops the head's badges when asked, and keeps the title", async () => {
+    const shown = await mount(FULL_CONFIG);
+    expect(shown.root.querySelector(".head .chip")).not.toBeNull();
+    const { root } = await mount({ ...FULL_CONFIG, flow: { chips: false } });
+    expect(root.querySelector(".head .chip")).toBeNull();
+    expect(root.querySelector(".head .title")).not.toBeNull();
+  });
+
+  it("writes only the picked parts of the foot, and none of them is no foot", async () => {
+    const { root } = await mount({ ...FULL_CONFIG, flow: { ...FULL_CONFIG.flow, foot_items: ["power", "extras"] } });
+    const foot = text(root.querySelector(".foot") as Element);
+    expect(foot).toContain("1,73 kW PV");
+    expect(foot).toContain("Heißgas");
+    expect(foot).not.toContain("l/h");
+    expect(foot).not.toContain("Vorlauf");
+    const none = await mount({ ...FULL_CONFIG, flow: { foot_items: [] } });
+    expect(none.root.querySelector(".foot")).toBeNull();
+    const rest = await mount({ ...FULL_CONFIG, flow: { foot_items: ["ambient"] } }, idle());
+    expect(text(rest.root.querySelector(".section .foot") as Element)).not.toContain("Starts");
   });
 
   it("gives the day's figures in place of a last run the circle already tells", async () => {
@@ -180,7 +347,10 @@ describe("the flow", () => {
   it("puts flow, return, spread, volume and extra figures under the flow while running", async () => {
     const { root } = await mount(FULL_CONFIG);
     const foot = text(root.querySelector(".section .foot") as Element);
-    expect(foot).toContain("WP 67,2 → 63,9 °C · Δ 3,2 K");
+    // Three named columns: electricity, ambient heat, the heat pump itself.
+    const labels = [...root.querySelectorAll(".section .foot-col small")].map((s) => s.textContent);
+    expect(labels).toEqual(["Strom", "Umweltwärme", "Wärmepumpe"]);
+    expect(foot).toContain("Wärmepumpe 67,2 → 63,9 °C Δ 3,2 K");
     expect(foot).toContain("1.752 l/h");
     expect(foot).toContain("Heißgas 87,5 °C");
   });
@@ -253,13 +423,13 @@ describe("the flow", () => {
     expect(label(word.root)).not.toContain("NOCH");
   });
 
-  it("arranges a running circuit's box five ways, the room's target in none of them, and says since when", async () => {
+  it("arranges a running circuit's box six ways, the room's target in none of them, and says since when", async () => {
     const hass = makeHass({
       "sensor.lambdawp_hc1_operating_state": {
         entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {}, last_changed: new Date(Date.now() - 3600000).toISOString()
       }
     });
-    const box = async (running: "pair" | "quiet" | "headline" | "flow" | "stack") => {
+    const box = async (running: "pair" | "quiet" | "headline" | "flow" | "stack" | "spread") => {
       const { root } = await mount({ ...FULL_CONFIG, flow: { running } }, hass);
       // The words on the box, not the tooltip: the tooltip carries everything, whichever view.
       const g = [...root.querySelectorAll(".section svg g")].find((x) => x.textContent?.includes("FBH EG")) as Element;
@@ -283,6 +453,10 @@ describe("the flow", () => {
     expect(flow).toContain("VL-Soll 30,6° −4,8 K");
     const stack = await box("stack");
     expect(stack).toContain("25,8° 30,6° VL-Soll 24,7°");
+    // Flow on top, the spread under it, what the curve asked for at the bottom.
+    const spread = await box("spread");
+    expect(spread).toContain("25,8° Δ 1,1 K 30,6° VL-Soll");
+    expect(spread).not.toContain("RL");
     // A controller writes 0 for a circuit it has switched off: that is no target, so the return stands in.
     const off = makeHass({
       "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} },
@@ -326,7 +500,8 @@ describe("the flow", () => {
     expect(t).not.toContain("0,00 kW");
     // Hot gas means nothing with the compressor at rest; the store's bottom is the tooltip's business.
     expect(text(root.querySelector(".section .foot") as Element)).not.toContain("Heißgas");
-    expect(text(root.querySelector(".section svg") as Element)).not.toContain("unten");
+    const drawn = [...(root.querySelector(".section svg") as Element).querySelectorAll("text")].map((t) => t.textContent).join(" ");
+    expect(drawn).not.toContain("unten");
     expect(root.querySelectorAll(".flow-dash")).toHaveLength(0);
   });
 
@@ -339,10 +514,14 @@ describe("the flow", () => {
   });
 
   it("reads today's history once, and nothing more: no band, no statistics", async () => {
+    // Today's modes and the stores' last hour; a week of the circuits only for "last heated",
+    // and a week of modes plus the buffer's five-minute means once for what it learns.
+    const quiet = await mount({ ...FULL_CONFIG, flow: { rest_note: "target" } });
+    expect((quiet.hass as ReturnType<typeof makeHass>).calls.filter((c) => c === "history/history_during_period")).toHaveLength(3);
     const { root, hass } = await mount(FULL_CONFIG);
     const calls = (hass as ReturnType<typeof makeHass>).calls;
-    expect(calls.filter((c) => c === "history/history_during_period")).toHaveLength(2);
-    expect(calls).not.toContain("recorder/statistics_during_period");
+    expect(calls.filter((c) => c === "history/history_during_period")).toHaveLength(4);
+    expect(calls.filter((c) => c === "recorder/statistics_during_period")).toHaveLength(1);
     expect(root.querySelector("rect.seg")).toBeNull();
     expect(root.querySelector(".store")).toBeNull();
     expect(text(root)).not.toContain("Kurzläufe");
@@ -367,7 +546,9 @@ describe("the flow", () => {
     const { root } = await mount({ ...FULL_CONFIG, flow: { gauge: "scale" } });
     const hotWater = [...root.querySelectorAll(".section svg g")].find((g) => g.textContent?.includes("Warmwasser")) as Element;
     expect(hotWater.querySelector("linearGradient")).not.toBeNull();
-    expect(text(hotWater)).toContain("PV 57,5°");
+    // The ends are round numbers and come first; PV at 57,5 is a notch of its own below 60.
+    expect(text(hotWater)).toContain("60°");
+    expect(text(hotWater)).not.toContain("57,5°");
     expect(text(hotWater)).toContain("40°");
     expect(text(hotWater)).toContain("Eco");
   });

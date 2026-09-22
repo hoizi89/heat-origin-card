@@ -72,7 +72,7 @@ describe("configuration", () => {
       flow: { sun: false, detail: "low", extras: [{ entity: "sensor.y" }] }
     } as never);
     // Every list and switch reads what is on the screen: the old switch became its word, the old dial its three keys.
-    expect(data.flow).toMatchObject({ ring: "plain", labels: "icon", scale: false, foot: "drive", gauge: "zones", curve: false });
+    expect(data.flow).toMatchObject({ ring: "plain", labels: "icon", scale: false, foot_items: ["power", "ambient", "buffer", "due"], gauge: "zones", curve: false });
     expect(data.font).toBe("system");
     expect(data.shape).toBe("standard");
     // The switches and the sections that no longer exist do not come back to be written again.
@@ -86,10 +86,26 @@ describe("configuration", () => {
     expect(data.modes).toBeUndefined();
   });
 
+  it("reads the foot's earlier word as the list of parts it kept, and a list as written", () => {
+    const bare = { type: "custom:heat-origin-card", entities: { mode: "sensor.x" } };
+    expect(resolveConfig(bare).flow.foot_items).toHaveLength(8);
+    expect(resolveConfig({ ...bare, flow: { foot: "no_spread" } }).flow.foot_items).not.toContain("pump");
+    expect(resolveConfig({ ...bare, flow: { foot: "none" } }).flow.foot_items).toEqual([]);
+    // The list wins over the word, keeps the card's order and drops what it does not know.
+    expect(resolveConfig({ ...bare, flow: { foot: "full", foot_items: ["day", "power", "nonsense" as never] } }).flow.foot_items).toEqual(["power", "day"]);
+    expect(resolveConfig({ ...bare, flow: { foot_items: [] } }).flow.foot_items).toEqual([]);
+    expect(editorData({ ...bare, flow: { foot: "drive" } }).flow).not.toHaveProperty("foot");
+    expect(resolveConfig(bare).flow.chips).toBe(true);
+    // "Last heated" by default; the plain room of earlier versions kept its empty line.
+    expect(resolveConfig(bare).flow.rest_note).toBe("last");
+    expect(resolveConfig({ ...bare, flow: { circuit: "room_plain" } }).flow.rest_note).toBe("none");
+    expect(resolveConfig({ ...bare, flow: { rest_note: "target" } }).flow.rest_note).toBe("target");
+  });
+
   it("offers three or more looks as a list, two as a switch, and says when each one shows", () => {
     const form = getConfigForm("de");
     const flat = JSON.stringify(form.schema);
-    expect(flat.match(/"boolean"/g)).toHaveLength(4);
+    expect(flat.match(/"boolean"/g)).toHaveLength(6);
     expect(form.computeLabel({ name: "ring" })).toBe("Um den Kreis");
     expect(form.computeHelper({ name: "curve" })).toContain("curve_flow");
     expect(form.computeHelper({ name: "buffer_line" })).toContain("steht");

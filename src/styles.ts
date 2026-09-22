@@ -66,6 +66,52 @@ export const cardStyles = css`
     font-size: 16px;
     font-weight: 600;
     margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Without the title: running on the sun, and since when, as the head's own line. */
+  .pv-mode {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--ho-muted);
+    cursor: pointer;
+  }
+
+  .pv-mode svg {
+    display: block;
+    width: 12px;
+    height: 12px;
+    flex: 0 0 12px;
+  }
+
+  .pv-mode,
+  .pv-mode b,
+  .pv-mode span {
+    white-space: nowrap;
+  }
+
+  .pv-mode b {
+    color: var(--ho-sun);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* Surplus solar: one small word by the title, in the sun's colour. */
+  .pv {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--ho-sun);
+    cursor: pointer;
   }
 
   .chip {
@@ -168,17 +214,57 @@ export const cardStyles = css`
 
   .foot {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: 4px 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     font-family: var(--ho-mono);
     font-size: 12.5px;
     color: var(--ho-muted);
     font-variant-numeric: tabular-nums;
   }
 
-  .foot > span {
+  /* While running: the electricity, the ambient heat and the pump, each a named column. */
+  .foot-cols {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .foot-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .foot-col small {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .foot-col b {
+    font-size: 13.5px;
+    white-space: nowrap;
+  }
+
+  .foot-col span {
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .foot-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 14px;
+  }
+
+  .foot-line > span {
     display: inline-flex;
     align-items: center;
     gap: 5px;

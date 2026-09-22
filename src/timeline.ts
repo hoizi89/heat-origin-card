@@ -45,6 +45,23 @@ export function parseHistory(response: unknown, entityId: string): StatePoint[] 
     .sort((a, b) => a.at - b.at);
 }
 
+/**
+ * When something last stopped being active, from its history: "now" while it still
+ * is, undefined when the history holds no active stretch at all. A restart writes
+ * unknown or unavailable for a few seconds; that is no end of anything.
+ */
+export function lastActive(points: StatePoint[], isActive: (state: string) => boolean): number | "now" | undefined {
+  let on = false;
+  let end: number | undefined;
+  for (const p of points) {
+    if (p.state === "unknown" || p.state === "unavailable") continue;
+    const active = isActive(p.state);
+    if (on && !active) end = p.at;
+    on = active;
+  }
+  return on ? "now" : end;
+}
+
 export function midnight(date: Date): number {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -139,19 +156,24 @@ export function buildDay(
 }
 
 /** The last finished run, joined across mode changes, and what it mostly was. */
-export function lastRun(day: DayTimeline | undefined): { from: number; to: number; kind: Segment["kind"] } | undefined {
+/**
+ * The last run: its whole stretch, and what the heat pump was doing at the end of it —
+ * which is the colour the dial ends on. A run that heats for an hour and then makes hot
+ * water for twenty minutes is one run, and the last thing it did was hot water; naming
+ * it after its longest part told a story the dial contradicted. `spanTo` is where the
+ * last part began, for the length of that part alone.
+ */
+export function lastRun(day: DayTimeline | undefined): { from: number; to: number; kind: Segment["kind"]; lastFrom: number } | undefined {
   if (!day) return undefined;
   const running = day.segments.filter((s) => s.kind !== "blocked");
   const last = running.at(-1);
   if (!last) return undefined;
   let from = last.from;
-  let longest = last;
   for (let i = running.length - 2; i >= 0; i -= 1) {
     if (running[i].to !== from) break;
     from = running[i].from;
-    if (running[i].to - running[i].from > longest.to - longest.from) longest = running[i];
   }
-  return { from, to: last.to, kind: longest.kind };
+  return { from, to: last.to, kind: last.kind, lastFrom: last.from };
 }
 
 /** Yesterday and today, or today alone. */

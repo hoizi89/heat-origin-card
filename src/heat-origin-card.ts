@@ -3,12 +3,14 @@ import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
 import { W as DRAW_W, T, TL, textWidth, box, branch, bypass, connector, dial, spine, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
 import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
+import { chargedAt, heatingRuns, learnBuffer, learnMarks, type BufferLearning, type LearnedMarks, type Sample } from "./learn";
 import { localize } from "./localize";
 import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
 import {
   buildDays,
   lastRun,
+  lastActive,
   midnight,
   parseHistory,
   withLive,
@@ -18,6 +20,7 @@ import {
 } from "./timeline";
 import type {
   ElectricSource,
+  FootItem,
   HeatOriginCardConfig,
   HomeAssistant,
   ModeKind,
@@ -41,6 +44,14 @@ import {
 
 const DAY = 86400000;
 const REFRESH = 5 * 60 * 1000;
+/** How far back "last heated" looks: a week, well inside the recorder's default ten days. */
+const LAST_HEAT_DAYS = 7;
+/** What the card learns about a buffer changes by the day; half an hour is fresh enough. */
+const LEARN_REFRESH = 30 * 60 * 1000;
+/** A start the card learned is only trusted on this many examples. */
+const LEARN_OFFSET_MIN = 3;
+/** How long PV mode holds through a dip in the surplus while the heat pump runs. */
+const PV_HOLD = 10 * 60 * 1000;
 const W = 368;
 /** Under this many pixels the drawing gives way to a list. Scaled down to 300 the drawing
  *  still reads better than any list; below that its small words are gone. */
@@ -69,9 +80,11 @@ const STORE_TONE: Record<StoreKind, string> = {
 const ON = new Set(["on", "true", "running", "open", "1", "heat", "heating"]);
 
 /** A symbol for a foot line: its own element, because the foot is HTML, not a drawing. */
-function mark(kind: "bolt" | "air" | "drop", tone: string) {
+function mark(kind: "bolt" | "air" | "drop" | "sun", tone: string) {
   const body =
-    kind === "bolt"
+    kind === "sun"
+      ? svg`<circle cx="8" cy="8" r="3.2" fill=${tone}/><path d="M8 1 V3 M8 13 V15 M1 8 H3 M13 8 H15 M3 3 L4.4 4.4 M11.6 11.6 L13 13 M3 13 L4.4 11.6 M11.6 4.4 L13 3" stroke=${tone} stroke-width="1.5" stroke-linecap="round"/>`
+      : kind === "bolt"
       ? svg`<path d="M9.2 1 L3.2 9.2 H7.4 L6.4 15 L12.8 6.6 H8.6 Z" fill=${tone}/>`
       : kind === "air"
         ? svg`<path d="M1.5 5 H9 a2.6 2.6 0 1 0 -2.6 -2.6 M1.5 8.5 H12.6 M1.5 12 H7.4 a2.6 2.6 0 1 1 -2.6 2.6"
@@ -132,7 +145,10 @@ export class HeatOriginCard extends LitElement {
     _points: { state: true },
     _narrow: { state: true },
     _wide: { state: true },
-    _trend: { state: true }
+    _trend: { state: true },
+    _lastHeat: { state: true },
+    _learned: { state: true },
+    _learnedMarks: { state: true }
   };
 
   static styles = cardStyles;
@@ -142,6 +158,18 @@ export class HeatOriginCard extends LitElement {
   private _points?: StatePoint[];
   /** Each store's own temperature over the last while, for how long it still lasts. */
   private _trend: Record<string, TrendPoint[]> = {};
+  /** When each circuit last heated, by index, as far back as the recorder was asked. */
+  private _lastHeat: Array<number | "now" | undefined> = [];
+  /** Per buffer (by store index): what its last days taught, and the history it was taught from. */
+  private _learned: Record<number, { learning: BufferLearning; top: Sample[]; bottom: Sample[]; curves: Sample[][]; runs: Array<[number, number]> }> = {};
+  /** Per store (by index): the set-points its charges have been ending at. */
+  private _learnedMarks: Record<number, LearnedMarks> = {};
+  private _learnedAt = 0;
+  /** When surplus solar was last enough for the heat pump's PV mode. */
+  private _pvSeenAt = 0;
+  /** Today's history of the PV signal, for since when the heat pump runs on the sun. */
+  private _pvPoints: StatePoint[] = [];
+  private _learning = false;
   private _narrow = false;
   private _wide = false;
   private _fetchedAt = 0;
@@ -193,6 +221,7 @@ export class HeatOriginCard extends LitElement {
   protected updated(changed: PropertyValues): void {
     if ((changed.has("hass") || changed.has("_config")) && this._needsHistory()) {
       if (Date.now() - this._fetchedAt > REFRESH && !this._fetching) void this._fetch();
+      if (Date.now() - this._learnedAt > LEARN_REFRESH && !this._learning) void this._learn();
     }
   }
 
@@ -210,12 +239,16 @@ export class HeatOriginCard extends LitElement {
     try {
       const tops = config.stores.map((store) => store.top).filter(Boolean);
       const since = Date.now() - DRIFT_WINDOW;
-      const [history, trends] = await Promise.all([
+      // Whatever the box calls active, its pump or its state word, is what "last heated" reads.
+      const watched = config.flow.rest_note === "last" ? config.circuits.map((c) => c.pump ?? c.state) : [];
+      const circuitIds = [...new Set(watched.filter((id): id is string => Boolean(id)))];
+      const [history, trends, circuits] = await Promise.all([
         hass.callWS({
           type: "history/history_during_period",
           start_time: start.toISOString(),
           end_time: now.toISOString(),
-          entity_ids: [config.entities.mode],
+          // The PV signal rides along: since when the sun runs the heat pump is a line of the head.
+          entity_ids: [config.entities.mode, ...(config.entities.pv_mode ? [config.entities.pv_mode] : [])],
           minimal_response: true,
           no_attributes: true,
           significant_changes_only: false
@@ -230,9 +263,27 @@ export class HeatOriginCard extends LitElement {
               no_attributes: true,
               significant_changes_only: false
             })
+          : Promise.resolve(undefined),
+        circuitIds.length
+          ? hass.callWS({
+              type: "history/history_during_period",
+              start_time: new Date(Date.now() - LAST_HEAT_DAYS * DAY).toISOString(),
+              end_time: now.toISOString(),
+              entity_ids: circuitIds,
+              minimal_response: true,
+              no_attributes: true,
+              significant_changes_only: false
+            })
           : Promise.resolve(undefined)
       ]);
       this._points = parseHistory(history, config.entities.mode);
+      this._pvPoints = config.entities.pv_mode ? parseHistory(history, config.entities.pv_mode) : [];
+      this._lastHeat = config.circuits.map((c, i) => {
+        const id = watched[i];
+        if (!id || !circuits) return undefined;
+        const active = c.pump ? (s: string) => s === "on" : (s: string) => circuitActive(s, c.active);
+        return lastActive(parseHistory(circuits, id), active);
+      });
       const trend: Record<string, TrendPoint[]> = {};
       for (const id of tops) trend[id] = parseTrend(trends, id, since);
       this._trend = trend;
@@ -242,6 +293,128 @@ export class HeatOriginCard extends LitElement {
 
     this._fetchedAt = Date.now();
     this._fetching = false;
+  }
+
+  /**
+   * A week of the heat pump's modes and the buffer's two temperatures, as the recorder's
+   * five-minute means: enough to see where it starts again and how long a charge lasts.
+   */
+  private async _learn(): Promise<void> {
+    const hass = this.hass;
+    const config = this._config;
+    if (!hass || !config) return;
+    const stores = config.stores.map((store, index) => ({ store, index })).filter(({ store }) => Boolean(store.top));
+    const buffers = stores.filter(({ store }) => store.kind === "buffer");
+    this._learnedAt = Date.now();
+    if (!stores.length) return;
+    this._learning = true;
+    const now = new Date();
+    const start = new Date(now.getTime() - LAST_HEAT_DAYS * DAY).toISOString();
+    const curveIds = config.circuits.map((c) => c.curve_flow).filter((id): id is string => Boolean(id));
+    const statIds = [...new Set([...stores.flatMap(({ store }) => [store.top, store.bottom]), ...curveIds].filter((id): id is string => Boolean(id)))];
+    try {
+      const [history, stats] = await Promise.all([
+        hass.callWS({
+          type: "history/history_during_period",
+          start_time: start,
+          end_time: now.toISOString(),
+          entity_ids: [config.entities.mode],
+          minimal_response: true,
+          no_attributes: true,
+          significant_changes_only: false
+        }),
+        hass.callWS<Record<string, Array<{ start: number | string; mean?: number | null }>>>({
+          type: "recorder/statistics_during_period",
+          start_time: start,
+          end_time: now.toISOString(),
+          statistic_ids: statIds,
+          period: "5minute",
+          types: ["mean"]
+        })
+      ]);
+      const series = (id: string | undefined): Sample[] =>
+        (id ? stats?.[id] ?? [] : [])
+          .filter((row) => typeof row.mean === "number")
+          .map((row) => ({ at: typeof row.start === "number" ? row.start : Date.parse(row.start), value: row.mean as number }))
+          .filter((s) => Number.isFinite(s.at) && Number.isFinite(s.value))
+          .sort((a, b) => a.at - b.at);
+      const modes = parseHistory(history, config.entities.mode);
+      const curves = curveIds.map((id) => series(id));
+      const learned: typeof this._learned = {};
+      for (const { store, index } of buffers) {
+        const top = series(store.top);
+        const bottom = store.bottom ? series(store.bottom) : top;
+        const learning = learnBuffer({ modes, words: config.modes, top, bottom, curves, volume: store.volume, now: now.getTime() });
+        learned[index] = { learning, top, bottom, curves, runs: heatingRuns(modes, config.modes, now.getTime()) };
+      }
+      this._learned = learned;
+      const marks: typeof this._learnedMarks = {};
+      for (const { store, index } of stores) {
+        marks[index] = learnMarks({
+          modes,
+          words: config.modes,
+          kind: store.kind === "hot_water" ? "hot_water" : "heating",
+          top: series(store.top),
+          target: this._setting(store.marks?.target),
+          now: now.getTime()
+        });
+      }
+      this._learnedMarks = marks;
+    } catch {
+      // The recorder may keep no five-minute statistics; the card then measures as before.
+    }
+    this._learning = false;
+  }
+
+  /** Where a buffer's heat pump starts again, as it has done lately; undefined until the card has seen enough. */
+  private _startsAt(store: StoreConfig & { kind: StoreKind }): number | undefined {
+    const config = this._config as ResolvedConfig;
+    const learned = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])]?.learning;
+    if (!learned) return undefined;
+    if (learned.offset !== undefined && learned.starts >= LEARN_OFFSET_MIN) {
+      const curves = config.circuits.map((c) => this._num(c.curve_flow)).filter((v): v is number => v !== undefined && v > 5);
+      if (curves.length) return Math.max(...curves) + learned.offset;
+    }
+    return learned.start;
+  }
+
+  /**
+   * When the heat pump will have to start again, from the last full charge: the heat it
+   * held above the start temperature, spent at the rate the house has been taking it.
+   * Not from how fast the top sensor falls — in a layered buffer that sensor holds for
+   * hours and then drops twenty kelvin in one, so any slope read off it is wrong.
+   */
+  private _startForecast(store: StoreConfig & { kind: StoreKind }): number | undefined {
+    const config = this._config as ResolvedConfig;
+    const learned = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])];
+    const draw = learned?.learning.draw;
+    const threshold = this._startsAt(store);
+    if (!learned || draw === undefined || threshold === undefined || !store.volume) return undefined;
+    const now = Date.now();
+    const charges = learned.runs.filter(([from, to]) => to - from > 10 * 60 * 1000);
+    const charged = chargedAt(learned.top, learned.bottom, charges, now, threshold, now - 36 * 60 * 60 * 1000);
+    // What is in the store right now, at the rate the house takes it. On its own this runs
+    // late — two sensors flatter a layered store near the end — so it is a ceiling, not the
+    // answer: whichever of the two comes first is the one the card can stand behind.
+    const mean = this._mean(store);
+    const fromNow =
+      mean === undefined ? undefined : now + (Math.max(0, (store.volume * 1.163 * (mean - threshold)) / 1000) / draw) * 3600_000;
+    const fromCharge = charged ? charged.at + (Math.max(0, (store.volume * 1.163 * (charged.mean - threshold)) / 1000) / draw) * 3600_000 : undefined;
+    const times = [fromCharge, fromNow].filter((t): t is number => t !== undefined);
+    return times.length ? Math.min(...times) : undefined;
+  }
+
+  /** The learned figures in words, for the tooltip. */
+  private _learnedHint(store: StoreConfig & { kind: StoreKind }): string {
+    const config = this._config as ResolvedConfig;
+    const learning = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])]?.learning;
+    const threshold = this._startsAt(store);
+    if (!learning || threshold === undefined) return "";
+    const parts = [this._t("learn.start", { t: formatTemp(threshold, this._locale) })];
+    if (learning.draw !== undefined) {
+      parts.push(this._t("learn.draw", { kw: formatPower(learning.draw, this._locale), n: String(learning.discharges) }));
+    }
+    return parts.join(" · ");
   }
 
   // ─── how long a store lasts ────────────────────────────────
@@ -262,19 +435,32 @@ export class HeatOriginCard extends LitElement {
   }
 
   /** The store's set-points as numbers, whichever way they were written. */
+  /** The store's set-points as numbers: what the YAML says, and where it says nothing, what the charges have shown. */
   private _marks(store: StoreConfig): { eco?: number; target?: number; pv?: number; max?: number } {
+    const config = this._config as ResolvedConfig;
+    const learned = this._learnedMarks[config.stores.indexOf(store as ResolvedConfig["stores"][number])]?.marks ?? {};
     return {
-      eco: this._setting(store.marks?.eco),
-      target: this._setting(store.marks?.target),
-      pv: this._setting(store.marks?.pv),
-      max: this._setting(store.marks?.max)
+      eco: this._setting(store.marks?.eco) ?? learned.eco,
+      target: this._setting(store.marks?.target) ?? learned.target,
+      pv: this._setting(store.marks?.pv) ?? learned.pv,
+      max: this._setting(store.marks?.max) ?? learned.max
     };
+  }
+
+  /** Which of the store's set-points were learned rather than written down. */
+  private _learnedKeys(store: StoreConfig): string[] {
+    const config = this._config as ResolvedConfig;
+    const learned = this._learnedMarks[config.stores.indexOf(store as ResolvedConfig["stores"][number])]?.marks ?? {};
+    return (["eco", "target", "pv", "max"] as const).filter((key) => store.marks?.[key] === undefined && learned[key] !== undefined);
   }
 
   private _floor(store: StoreConfig & { kind: StoreKind }): number {
     const set = this._setting(store.usable_min);
     if (set !== undefined) return set;
     if (store.kind === "hot_water") return 40;
+    // Empty is where the heat pump has been starting again, once the card has watched it do so.
+    const learned = this._startsAt(store);
+    if (learned !== undefined) return learned;
     const config = this._config as ResolvedConfig;
     let warmest: number | undefined;
     for (const circuit of config.circuits) {
@@ -320,9 +506,17 @@ export class HeatOriginCard extends LitElement {
     return slopePerHour((this._trend[store.top] ?? []).filter((p) => p.at >= since));
   }
 
-  /** The same over the last hour: slower, steadier, for the direction a store is going. */
-  private _drift(store: StoreConfig): number | undefined {
-    return slopePerHour(this._trend[store.top] ?? []);
+  /**
+   * The same over the last hour: slower, steadier, for the direction a store is going.
+   * A store being charged is measured from its last twenty minutes only. A charge starts
+   * by stirring the cold bottom into the top — fifty degrees drops to forty-two before it
+   * climbs — and an hour that holds that dip reads falling while the store fills.
+   */
+  private _drift(store: StoreConfig, charging = false): number | undefined {
+    const points = this._trend[store.top] ?? [];
+    if (!charging) return slopePerHour(points);
+    const since = Date.now() - TREND_WINDOW;
+    return slopePerHour(points.filter((p) => p.at >= since));
   }
 
   /** The power being taken out of a store: its litres times how fast it is cooling. */
@@ -346,6 +540,11 @@ export class HeatOriginCard extends LitElement {
   /** How long until this store drops to the temperature that makes it useless. */
   private _lasts(store: StoreConfig & { kind: StoreKind }, floor: number): string | undefined {
     const config = this._config as ResolvedConfig;
+    const learned = store.kind === "buffer" ? this._startForecast(store) : undefined;
+    if (learned !== undefined) {
+      if (learned <= Date.now()) return this._t("learn.due");
+      return this._t("learn.until", { time: clock(new Date(learned), this._locale) });
+    }
     const mean = this._mean(store);
     if (mean === undefined) return undefined;
     const hours = hoursLeft(mean, floor, this._fall(store), config.forecast_min_slope);
@@ -377,6 +576,79 @@ export class HeatOriginCard extends LitElement {
     const hours = hoursLeft(top, at, this._fall(store), config.forecast_min_slope);
     if (hours === undefined) return undefined;
     return this._t("store.due_in", { mark, span: this._spanWords(hours) });
+  }
+
+  /**
+   * When a resting circuit last heated, in words: the time and how long ago today,
+   * "yesterday" and a time, then days. Nothing until the recorder has answered.
+   */
+  private _lastHeatWords(index: number): string | undefined {
+    const circuit = (this._config as ResolvedConfig).circuits[index];
+    if (!circuit || !(circuit.pump ?? circuit.state)) return undefined;
+    if (!this._fetchedAt || index >= this._lastHeat.length) return undefined;
+    const last = this._lastHeat[index];
+    if (last === "now") return undefined;
+    if (last === undefined) return this._t("rest.long", { n: String(LAST_HEAT_DAYS) });
+    const now = new Date();
+    const time = clock(new Date(last), this._locale);
+    const days = Math.round((midnight(now) - midnight(new Date(last))) / DAY);
+    if (days <= 0) {
+      const minutes = Math.max(1, Math.round((now.getTime() - last) / 60000));
+      const ago = minutes < 60 ? `${minutes} ${this._t("unit.min")}` : `${Math.round(minutes / 60)} ${this._t("unit.h")}`;
+      return this._t("rest.today", { time, ago });
+    }
+    if (days === 1) return this._t("rest.yesterday", { time });
+    return this._t("rest.days", { n: String(days) });
+  }
+
+  /** Whether the heat pump runs on surplus solar right now, as far as the card was told. */
+  private _pvMode(): boolean {
+    const config = this._config as ResolvedConfig;
+    const entity = stateOf(this.hass, config.entities.pv_mode);
+    if (!entity) return false;
+    const word = entity.state.toLowerCase();
+    if (["on", "true", "active", "pv"].includes(word)) return true;
+    if (["off", "false", "inactive"].includes(word)) return false;
+    const surplus = powerKw(entity);
+    if (surplus === undefined) return false;
+    // What the heat pump itself asks for from the sun (Lambda's E-Manager set-point) is
+    // the answer as it is: nought at night, its own minimum and up by day, held through
+    // a passing cloud by the heat pump's own logic.
+    if (!config.pv_mode_own) return surplus >= config.pv_mode_above;
+    // A bare export figure is measured after the heat pump has taken its share. Running
+    // on the sun it eats its own surplus: 3 kW off the roof, 1.4 kW into the compressor,
+    // 0.1 kW left over. Both together are what counts, held through a short dip.
+    const running = isRunning(this._mode().kind);
+    const own = running ? Math.max(0, this._live().electric ?? 0) : 0;
+    const now = Date.now();
+    if (surplus + own >= config.pv_mode_above) {
+      this._pvSeenAt = now;
+      return true;
+    }
+    return running && now - this._pvSeenAt < PV_HOLD;
+  }
+
+  /** When the PV signal last came on today; undefined when it has been on since before midnight, or is off. */
+  private _pvSince(): number | undefined {
+    const config = this._config as ResolvedConfig;
+    const on = (state: string) => {
+      const word = state.toLowerCase();
+      if (["on", "true", "active", "pv"].includes(word)) return true;
+      const n = Number(state);
+      const unit = unitOf(stateOf(this.hass, config.entities.pv_mode)).toLowerCase();
+      return Number.isFinite(n) && (unit === "w" ? n / 1000 : n) >= config.pv_mode_above;
+    };
+    let since: number | undefined;
+    let was = false;
+    for (const p of this._pvPoints) {
+      if (p.state === "unknown" || p.state === "unavailable") continue;
+      const now = on(p.state);
+      if (now && !was) since = p.at;
+      if (!now) since = undefined;
+      was = now;
+    }
+    // On since the first point of the day is on since before it: no time is better than a wrong one.
+    return since !== undefined && since !== this._pvPoints[0]?.at ? since : undefined;
   }
 
   /** What the circuit says it is doing: its state word, or its pump. This is what its box shows. */
@@ -591,9 +863,30 @@ export class HeatOriginCard extends LitElement {
 
   private _renderHead() {
     const config = this._config as ResolvedConfig;
+    if (!config.show_title) {
+      // Without its title the head is only news: running on the sun, and since when.
+      const pv = this._pvMode();
+      const since = pv ? this._pvSince() : undefined;
+      const chips = config.flow.chips ? this._chip() : nothing;
+      if (!pv && chips === nothing) return nothing;
+      return html`<div class="head">
+        ${pv
+          ? html`<p class="pv-mode" @click=${() => this._moreInfo(config.entities.pv_mode)}>${mark("sun", "var(--ho-sun)")}<b>${this._t("flow.pv_mode")}</b>${
+              since === undefined ? nothing : html`<span>· ${this._t("flow.pv_since", { time: clock(new Date(since), this._locale) })}</span>`
+            }</p>`
+          : html`<span></span>`}
+        ${chips}
+      </div>`;
+    }
     return html`<div class="head">
-      <p class="title">${config.title ?? this._t("card.title")}</p>
-      ${this._chip()}
+      <p class="title">${config.title ?? this._t("card.title")}${
+        // Running on surplus solar is the whole plant's state, so it stands by the title,
+        // whether the badges are shown or not.
+        this._pvMode()
+          ? html`<span class="pv" @click=${() => this._moreInfo(config.entities.pv_mode)}>${mark("sun", "var(--ho-sun)")}${this._t("flow.pv")}</span>`
+          : nothing
+      }</p>
+      ${config.flow.chips ? this._chip() : nothing}
     </div>`;
   }
 
@@ -612,8 +905,14 @@ export class HeatOriginCard extends LitElement {
       const floor = this._floor(store);
       const top = this._num(store.top);
       const ceiling = this._ceiling(store, floor, top);
-      const span = ceiling - floor;
-      const at = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - floor) / span)) : 0);
+      // A scale with numbers on its ends runs between round ones: 30 to 50 reads at a glance,
+      // 31,4 to 50,5 does not. Stages carry names, not numbers, and a round end would only
+      // add a stage above the top set-point. What is usable is counted from the exact floor.
+      const round = config.flow.gauge !== "zones";
+      const low = round ? Math.round(floor / 5) * 5 : floor;
+      const high = round ? Math.max(low + 5, Math.round(ceiling / 5) * 5) : ceiling;
+      const span = high - low;
+      const at = (t: number) => (span > 0 ? Math.min(1, Math.max(0, (t - low) / span)) : 0);
       const bottom = this._num(store.bottom) ?? top;
       const charging = running && ((store.kind === "hot_water" && mode.kind === "hot_water") || (store.kind === "buffer" && mode.kind === "heating"));
       const draining = carried?.store === store;
@@ -624,7 +923,7 @@ export class HeatOriginCard extends LitElement {
       const marks = (["eco", "target", "pv", "max"] as const)
         .map((key) => ({ key, value: set[key] }))
         .filter((x): x is { key: "eco" | "target" | "pv" | "max"; value: number } =>
-          x.value !== undefined && x.value > floor && x.value < ceiling)
+          x.value !== undefined && x.value > low && x.value < high)
         .map((x) => ({ at: at(x.value), name: this._t(`mark.${x.key}`) }));
 
       // Charging or discharging is the news and takes the slot — and a discharging buffer
@@ -635,18 +934,31 @@ export class HeatOriginCard extends LitElement {
       const lasts = draining && head === "left" ? this._lasts(store, floor) : undefined;
       const kw = draining && head === "draw" ? this._draw(store) : undefined;
       const to = draining ? carried!.circuits.map((i) => config.circuits[i]?.short).filter(Boolean).join("+") : "";
+      // A buffer charging on the sun charges to a top the card has seen it reach; how fast it
+      // climbs says when. Off the sun the heat pump stops far lower, at a point the card does
+      // not know, so it says nothing rather than a time that is hours off.
+      const fullAt = (() => {
+        if (!charging || store.kind !== "buffer" || top === undefined || !this._pvMode()) return undefined;
+        const fall = this._drift(store, true);
+        const rise = fall === undefined ? undefined : -fall;
+        if (rise === undefined || rise < 1 || ceiling - top < 0.3) return undefined;
+        const hours = (ceiling - top) / rise;
+        return hours <= 8 ? Date.now() + hours * 3600_000 : undefined;
+      })();
       const word = charging
-        ? this._t("flow.charging")
+        ? fullAt === undefined
+          ? this._t("flow.charging")
+          : `${this._t("flow.charging")} · ${this._t("flow.full_at", { time: clock(new Date(fullAt), locale) })}`
         : !draining
           ? store.name
           : head === "left" && lasts
-            ? `≈ ${lasts}`
+            ? this._startForecast(store) !== undefined ? lasts : `≈ ${lasts}`
             : head === "draw"
               ? `${kw === undefined ? this._t("flow.discharging") : `${formatPower(kw, locale)} kW`} → ${to}`
               : this._t("flow.discharging");
       // Which way the store is going, off a whole hour: a tenth of a kelvin at a time is
       // all a resting buffer moves, and the arrow says "holding" rather than nothing.
-      const drift = config.flow.trend !== "none" ? this._drift(store) : undefined;
+      const drift = config.flow.trend !== "none" ? this._drift(store, charging) : undefined;
       const digits = (v: number) => `${formatTemp(v, locale)}°`;
       // The scale's ends drop a ",0" nobody needs, so the names between them have room.
       const end = (v: number) => `${v % 1 === 0 ? formatNumber(v, locale, 0) : formatTemp(v, locale)}°`;
@@ -659,8 +971,9 @@ export class HeatOriginCard extends LitElement {
         label: word.toUpperCase(),
         labelTone: charging || draining ? STORE_TONE[store.kind] : undefined,
         value: top === undefined ? "–" : digits(top),
-        labelRight: usable === undefined ? undefined : this._t("flow.usable_unit"),
+        labelRight: usable === undefined ? undefined : this._t("flow.usable").toUpperCase(),
         valueRight: usable === undefined ? undefined : this._one(usable),
+        unitRight: usable === undefined ? undefined : this._t("flow.usable_unit"),
         level:
           top === undefined
             ? undefined
@@ -668,25 +981,30 @@ export class HeatOriginCard extends LitElement {
                 top: at(top),
                 bottom: at(bottom ?? top),
                 marks,
-                scale: [end(floor), end(ceiling)] as [string, string],
+                scale: [end(low), end(high)] as [string, string],
                 // The set-point that is the top of the scale names its right-hand end.
                 ceilingName: (["eco", "target", "pv", "max"] as const)
-                  .filter((key) => set[key] !== undefined && Math.abs((set[key] as number) - ceiling) < 0.05)
+                  .filter((key) => set[key] !== undefined && (set[key] as number) >= high - 1.5 && (set[key] as number) <= high + 1.5)
                   .map((key) => this._t(`mark.${key}`))[0],
                 under: this._t("stores.under")
               },
         loop: this._loopOf(store),
+        // Charging, the word says which way it goes; an arrow beside it only says it twice.
         trend:
-          drift === undefined
+          drift === undefined || charging
             ? undefined
             : Math.abs(drift) < DRIFT_MIN
               ? { dir: "flat" }
               : { dir: drift > 0 ? "down" : "up", rate: config.flow.trend === "rate" ? `${this._one(Math.abs(drift))} K/h` : undefined },
-        hint: this._storeHint(store, floor, ceiling, usable) + (lasts ? ` · ${this._t("forecast.how")}` : "")
+        hint: [
+          this._storeHint(store, floor, ceiling, usable),
+          store.kind === "buffer" ? this._learnedHint(store) : "",
+          lasts ? this._t(store.kind === "buffer" && this._startForecast(store) !== undefined ? "learn.how" : "forecast.how") : ""
+        ].filter(Boolean).join(" · ")
       };
     });
 
-    const circuits: BoxModel[] = config.circuits.map((circuit) => {
+    const circuits: BoxModel[] = config.circuits.map((circuit, index) => {
       const raw = stateOf(this.hass, circuit.state)?.state;
       const active = this._circuitActive(circuit);
       const room = this._num(circuit.room);
@@ -700,7 +1018,12 @@ export class HeatOriginCard extends LitElement {
       // Running, the box's word is what the circuit does and since when: "HEIZT · 21:40".
       const changed = stateOf(this.hass, circuit.pump ?? circuit.state)?.last_changed;
       const sinceAt = changed ? Date.parse(changed) : NaN;
-      const since = Number.isFinite(sinceAt) && Date.now() - sinceAt < DAY ? ` · ${clock(new Date(sinceAt), locale)}` : "";
+      // Since yesterday is said as such: a bare 22:09 in the afternoon reads as tonight.
+      // A run from before midnight keeps its time out of the word: a bare 22:09 in the
+      // afternoon reads as tonight, and "yesterday" does not fit a box. The tooltip says it.
+      const fresh = Number.isFinite(sinceAt) && Date.now() - sinceAt < DAY;
+      const since = fresh && sinceAt >= midnight(new Date()) ? ` · ${clock(new Date(sinceAt), locale)}` : "";
+      const sinceLong = fresh && !since ? this._t("flow.since_yesterday", { time: clock(new Date(sinceAt), locale) }) : "";
       const doing = `${circuit.state ? shortWordLabel(raw, locale, 10) : this._t("flow.running")}${since}`;
       // What the heating curve wants of the flow, and how far the flow is from it.
       // A controller writes 0 for a circuit it has switched off; that is no target.
@@ -711,7 +1034,7 @@ export class HeatOriginCard extends LitElement {
 
       // Twenty-five degrees in a room is neither good nor bad until something says what
       // was wanted there. The heat pump knows; the card only had to ask it.
-      const want = face === "room" ? this._num(circuit.target_room) : undefined;
+      const want = face === "room" && config.flow.rest_note === "target" ? this._num(circuit.target_room) : undefined;
       const target =
         want === undefined || room === undefined
           ? undefined
@@ -736,13 +1059,14 @@ export class HeatOriginCard extends LitElement {
           // A circuit at rest moves no water, so its flow and return are standing figures
           // that say nothing. The room and what it was asked for are the whole story; the
           // curve's ask comes in beside the flow only when somebody wants it.
+          const lastWords = config.flow.rest_note === "last" ? this._lastHeatWords(index) : undefined;
           return {
             ...base,
             label: resting.toUpperCase(),
             value: digits(room),
             pair: curveT === undefined ? undefined : { up: digits(flow), curve: digits(curveT), curveLabel: this._t("flow.curve") },
-            target,
-            hint: circuit.name
+            target: lastWords ? { text: lastWords, off: "", tone: MUTED } : target,
+            hint: [circuit.name, lastWords].filter(Boolean).join(" · ")
           };
         }
         // Running, the room's target explains nothing — the circuit is doing what it
@@ -751,12 +1075,15 @@ export class HeatOriginCard extends LitElement {
         const view = config.flow.running;
         const rl = ret === undefined ? "" : `${this._t("flow.rl")} ${digits(ret)}`;
         const detail = [rl, spread].filter(Boolean).join(" · ");
-        const curveText = curveAll === undefined ? undefined : `${this._t("flow.curve")} ${digits(curveAll)}`;
-        const hint = [circuit.name, doing, detail, curveText && curveOff !== undefined ? `${curveText} ${signed(curveOff)}` : ""].filter(Boolean).join(" · ");
+        const raised = curveAll !== undefined && this._pvMode();
+        const curveWord = this._t(raised ? "flow.curve_pv" : "flow.curve");
+        const curveTone = raised ? "var(--ho-sun)" : undefined;
+        const curveText = curveAll === undefined ? undefined : `${curveWord} ${digits(curveAll)}`;
+        const hint = [circuit.name, doing, sinceLong, detail, curveText && curveOff !== undefined ? `${curveText} ${signed(curveOff)}` : "", raised ? this._t("flow.curve_pv_how") : ""].filter(Boolean).join(" · ");
         const flowPair = (extra: Partial<NonNullable<BoxModel["pair"]>> = {}) =>
           curveAll === undefined
             ? { up: digits(flow), down: digits(ret), ...extra }
-            : { up: digits(flow), curve: digits(curveAll), curveLabel: this._t("flow.curve"), ...extra };
+            : { up: digits(flow), curve: digits(curveAll), curveLabel: curveWord, curveTone, ...extra };
         if (view === "flow") {
           return {
             ...base,
@@ -769,11 +1096,21 @@ export class HeatOriginCard extends LitElement {
             hint
           };
         }
+        if (view === "spread") {
+          // Flow, then how much of it the circuit keeps, then what the curve asked for.
+          return {
+            ...base,
+            label: doing.toUpperCase(),
+            value: digits(room),
+            pair: { up: digits(flow), mid: spread, curve: curveAll === undefined ? undefined : digits(curveAll), curveLabel: curveWord, curveTone },
+            hint
+          };
+        }
         if (view === "headline") {
           return {
             ...base,
             label: (curveText ?? doing).toUpperCase(),
-            labelTone: curveText ? "var(--ho-warn)" : undefined,
+            labelTone: curveText ? curveTone ?? "var(--ho-warn)" : undefined,
             value: digits(room),
             pair: { up: digits(flow), down: digits(ret), spread },
             hint
@@ -833,9 +1170,25 @@ export class HeatOriginCard extends LitElement {
   private _storeHint(store: StoreConfig & { kind: StoreKind }, floor: number, ceiling: number, usable: number | undefined): string {
     const locale = this._locale;
     const parts = [store.name];
+    // The box fills by the mean; its two sensors, which the box has no room for, are said here.
+    const top = this._num(store.top);
+    const bottom = this._num(store.bottom);
+    if (top !== undefined && bottom !== undefined && store.bottom) {
+      parts.push(this._t("stores.layers", { top: formatTemp(top, locale), bottom: formatTemp(bottom, locale) }));
+    }
     if (usable !== undefined) parts.push(`${this._one(usable)} kWh ${this._t("stores.above", { t: formatTemp(floor, locale) })}`);
     // The two ends the level is measured between, named: a bare range would leave that to guess.
     parts.push(`${this._t("stores.empty", { t: formatTemp(floor, locale) })} · ${this._t("stores.full", { t: formatTemp(ceiling, locale) })}`);
+    // Set-points the card worked out itself say so, and what they are.
+    const learned = this._learnedKeys(store);
+    if (learned.length) {
+      const set = this._marks(store);
+      parts.push(
+        this._t("learn.marks", {
+          marks: learned.map((key) => `${this._t(`mark.${key}`)} ${formatTemp(set[key as "eco"] as number, locale)} °C`).join(", ")
+        })
+      );
+    }
     // Circulation draws from this store, so it is told here rather than given a box.
     if (store.circulation_pump) {
       const on = this._isOn(store.circulation_pump);
@@ -849,11 +1202,15 @@ export class HeatOriginCard extends LitElement {
    * circle, but at 368 px that line ran into the right-hand boxes; across the full
    * width it fits with a symbol beside it, and the ring shows the split anyway.
    */
-  private _flowFoot(running: boolean): TemplateResult[] {
+  private _flowFoot(running: boolean): { columns: Array<{ label: string; value: TemplateResult; sub?: TemplateResult | string }>; foot: TemplateResult[] } {
     const config = this._config as ResolvedConfig;
     const locale = this._locale;
     const foot: TemplateResult[] = [];
-    if (config.flow.foot === "none") return foot;
+    // While the heat pump runs, where its heat comes from and what it does with it read
+    // best as three named columns: the electricity, the ambient heat, the pump itself.
+    const columns: Array<{ label: string; value: TemplateResult; sub?: TemplateResult | string }> = [];
+    const has = (item: FootItem) => config.flow.foot_items.includes(item);
+    if (config.flow.foot_items.length === 0) return { columns, foot };
 
     const live = this._live();
     const heat = running ? live.heat ?? 0 : 0;
@@ -864,46 +1221,53 @@ export class HeatOriginCard extends LitElement {
     const outdoor = this._temp(config.entities.outdoor);
     const ambient = this._t("ambient." + config.source);
 
-    if (running && config.entities.electric_power) {
-      foot.push(html`<span>${mark("bolt", dominant ? SOURCE_TONE[dominant] : "var(--ho-power)")}
-        <span><b>${formatPower(electric, locale)} kW</b> ${this._sourceLabel(shares)}</span></span>`);
+    if (running && has("power") && config.entities.electric_power) {
+      columns.push({
+        label: this._t("foot.power"),
+        value: html`${formatPower(electric, locale)} kW`,
+        sub: html`<span style="color:${dominant ? SOURCE_TONE[dominant] : "inherit"}">${this._sourceLabel(shares)}</span>`
+      });
     }
-    if (running && config.entities.heat_power && config.entities.electric_power) {
-      foot.push(html`<span>${mark("air", "var(--ho-air)")}
-        <span><b>${formatPower(air, locale)} kW</b> ${ambient}${outdoor !== undefined ? " " + outdoor + " °C" : ""}</span></span>`);
+    if (running && has("ambient") && config.entities.heat_power && config.entities.electric_power) {
+      columns.push({
+        label: this._t("foot.ambient"),
+        value: html`${formatPower(air, locale)} kW`,
+        sub: `${ambient}${outdoor !== undefined ? ` ${outdoor} °C` : ""}`
+      });
     }
-    if (!running && outdoor !== undefined) {
+    if (!running && has("ambient") && outdoor !== undefined) {
       foot.push(html`<span>${mark("air", PALETTE.muted)}<span><b>${outdoor} °C</b> ${this._t("flow.outside")}</span></span>`);
     }
 
     // What the circuits are pulling out of the buffer: its litres times how fast it
     // falls. The split layout writes this on the pipe; two columns have no pipe.
-    const carried = config.flow.layout === "columns" ? this._fromBuffer() : undefined;
+    const carried = has("buffer") && config.flow.layout === "columns" ? this._fromBuffer() : undefined;
     const drawn = carried ? this._draw(carried.store) : undefined;
     if (drawn !== undefined) {
       foot.push(html`<span style="color:${TONE.heating}">${mark("drop", TONE.heating)}<b>${formatPower(drawn, locale)} kW</b> ${this._t("flow.from_buffer")}</span>`);
     }
 
     // The hot water store cools too, and the Eco mark is where the heat pump gives in.
-    const due = this._hotWaterDue();
+    const due = has("due") ? this._hotWaterDue() : undefined;
     if (due) foot.push(html`<span style="color:${TONE.hot_water}">${mark("drop", TONE.hot_water)}<b>${due}</b></span>`);
 
-    if (config.flow.foot === "drive") return foot;
-
-    if (running && config.flow.foot === "full") {
-      const flowT = this._num(config.entities.flow);
-      const retT = this._num(config.entities.return);
-      const volume = this._num(config.entities.volume_flow);
-      if (flowT !== undefined && retT !== undefined) {
-        foot.push(html`<span>${this._t("flow.wp")} <b>${formatTemp(flowT, locale)} → ${formatTemp(retT, locale)} °C</b> · Δ <b>${this._one(flowT - retT)} K</b></span>`);
-      } else if (flowT !== undefined) {
-        foot.push(html`<span>${this._t("flow.flow")} <b>${formatTemp(flowT, locale)} °C</b></span>`);
-      }
-      if (volume !== undefined) {
-        foot.push(html`<span><b>${formatNumber(volume, locale, 0)}</b> ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}</span>`);
+    if (running) {
+      const flowT = has("pump") ? this._num(config.entities.flow) : undefined;
+      const retT = has("pump") ? this._num(config.entities.return) : undefined;
+      const volume = has("volume") ? this._num(config.entities.volume_flow) : undefined;
+      const litres = volume === undefined ? "" : `${formatNumber(volume, locale, 0)} ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}`;
+      if (flowT !== undefined) {
+        const spread = retT === undefined ? "" : `Δ ${this._one(flowT - retT)} K`;
+        columns.push({
+          label: this._t("foot.pump"),
+          value: html`${formatTemp(flowT, locale)}${retT === undefined ? "" : ` → ${formatTemp(retT, locale)}`} °C`,
+          sub: [spread, litres].filter(Boolean).join(" · ")
+        });
+      } else if (litres) {
+        columns.push({ label: this._t("foot.pump"), value: html`${litres}` });
       }
     }
-    if (!running) {
+    if (!running && has("day")) {
       const today = this._days()?.at(-1);
       if (today) {
         if (config.flow.balance) {
@@ -931,7 +1295,7 @@ export class HeatOriginCard extends LitElement {
         }
       }
     }
-    for (const extra of config.flow.extras) {
+    for (const extra of has("extras") ? config.flow.extras : []) {
       if (extra.running_only && !running) continue;
       const entity = stateOf(this.hass, extra.entity);
       if (!entity) continue;
@@ -940,12 +1304,20 @@ export class HeatOriginCard extends LitElement {
       const name = extra.name ?? String(entity.attributes.friendly_name ?? extra.entity);
       foot.push(html`<span>${name} <b>${value}${unitOf(entity) ? " " + unitOf(entity) : ""}</b></span>`);
     }
-    return foot;
+    return { columns, foot };
   }
 
   private _footBlock(running: boolean) {
-    const foot = this._flowFoot(running);
-    return foot.length ? html`<div class="foot">${foot}</div>` : nothing;
+    const { columns, foot } = this._flowFoot(running);
+    if (!columns.length && !foot.length) return nothing;
+    return html`<div class="foot">
+      ${columns.length
+        ? html`<div class="foot-cols" style="--cols:${columns.length}">${columns.map(
+            (c) => html`<div class="foot-col"><small>${c.label}</small><b>${c.value}</b>${c.sub ? html`<span>${c.sub}</span>` : nothing}</div>`
+          )}</div>`
+        : nothing}
+      ${foot.length ? html`<div class="foot-line">${foot}</div>` : nothing}
+    </div>`;
   }
 
   /** The ring around the heat pump: ambient heat, then each source of the electricity. */
@@ -1209,7 +1581,10 @@ export class HeatOriginCard extends LitElement {
         return svg`<text x=${cx} y=${cy + 4} text-anchor="middle" font-size="12" font-weight="600"
           fill=${PALETTE.muted}>${this._modeLabel(mode.kind, mode.raw)}</text>`;
       }
-      const span = formatSpan((last.to - last.from) / 60000);
+      // The word names what it did last, so the length beside it is that part's own: a
+      // run that heated for an hour and then made hot water for twenty minutes reads
+      // "20 min Warmwasser", and the dial shows the hour before it.
+      const span = formatSpan((last.to - last.lastFrom) / 60000);
       const short = span.hours !== undefined
         ? `${span.hours}:${String(span.minutes ?? 0).padStart(2, "0")} ${this._t("unit.h")}`
         : `${span.minutes ?? 0} ${this._t("unit.min")}`;
