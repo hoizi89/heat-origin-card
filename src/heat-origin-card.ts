@@ -50,6 +50,8 @@ const LAST_HEAT_DAYS = 7;
 const LEARN_REFRESH = 30 * 60 * 1000;
 /** A start the card learned is only trusted on this many examples. */
 const LEARN_OFFSET_MIN = 3;
+/** How long a worked-out start time stands before it is worked out again. */
+const FORECAST_CACHE = 60_000;
 /** How long PV mode holds through a dip in the surplus while the heat pump runs. */
 const PV_HOLD = 10 * 60 * 1000;
 const W = 368;
@@ -167,6 +169,8 @@ export class HeatOriginCard extends LitElement {
   > = {};
   /** Per store (by index): the set-points its charges have been ending at. */
   private _learnedMarks: Record<number, LearnedMarks> = {};
+  /** Per buffer: the last start time worked out, and when. Cleared whenever the card learns anew. */
+  private _forecasts: Record<number, { at: number; value: number | undefined }> = {};
   private _learnedAt = 0;
   /** When surplus solar was last enough for the heat pump's PV mode. */
   private _pvSeenAt = 0;
@@ -354,6 +358,7 @@ export class HeatOriginCard extends LitElement {
         learned[index] = { learning, top, bottom, curves, outdoor, runs: heatingRuns(modes, config.modes, now.getTime()) };
       }
       this._learned = learned;
+      this._forecasts = {};
       const marks: typeof this._learnedMarks = {};
       for (const { store, index } of stores) {
         marks[index] = learnMarks({
@@ -403,6 +408,20 @@ export class HeatOriginCard extends LitElement {
    * hours and then drops twenty kelvin in one, so any slope read off it is wrong.
    */
   private _startForecast(store: StoreConfig & { kind: StoreKind }): number | undefined {
+    // Home Assistant hands a card a new `hass` on every state change in the house, and
+    // three places on this card ask for the forecast. Working it out means walking two
+    // days of five-minute means, which is a millisecond a time — nothing once, but the
+    // card would spend it many times a second on a tablet. The answer is a clock time
+    // that moves by the minute, so once a minute is as often as it is worth having.
+    const index = (this._config as ResolvedConfig).stores.indexOf(store as ResolvedConfig["stores"][number]);
+    const cached = this._forecasts[index];
+    if (cached && Date.now() - cached.at < FORECAST_CACHE) return cached.value;
+    const value = this._forecastNow(store);
+    this._forecasts[index] = { at: Date.now(), value };
+    return value;
+  }
+
+  private _forecastNow(store: StoreConfig & { kind: StoreKind }): number | undefined {
     const config = this._config as ResolvedConfig;
     const learned = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])];
     const draw = this._drawNow(store);
