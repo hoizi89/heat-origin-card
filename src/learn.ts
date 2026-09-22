@@ -16,6 +16,10 @@ export interface BufferLearning {
   start?: number;
   /** What the house takes from the buffer while it carries the circuits alone, in kW. */
   draw?: number;
+  /** The discharge `draw` was measured over, and how cold it was outside meanwhile. */
+  drawFrom?: number;
+  drawTo?: number;
+  drawOutdoor?: number;
   /** How many starts and discharges the two figures rest on. */
   starts: number;
   discharges: number;
@@ -31,12 +35,33 @@ const DEMAND_SPAN = 10;
 const THROUGH = 4;
 /** Shorter than this a run is a top-up, not a charge. */
 const LONG_RUN = 10 * MINUTE;
+/** What a house is held at. Its heat loss runs with the gap between this and the air outside. */
+const INDOOR = 20;
+/** Air this far below indoors is needed before a comparison of two nights says anything. */
+const WEATHER_SPAN = 2;
+/** How much air to average on either side of the comparison, so one warm hour cannot swing it. */
+const WEATHER_WINDOW = 2 * HOUR;
+/** The furthest the weather may stretch or shrink the learned draw. */
+const WEATHER_LIMIT = [0.6, 1.8] as const;
 
 function median(values: number[]): number | undefined {
   if (!values.length) return undefined;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** The mean of every sample inside a window, or nothing if the window holds none. */
+export function meanBetween(samples: Sample[], from: number, to: number): number | undefined {
+  let sum = 0;
+  let count = 0;
+  for (const s of samples) {
+    if (s.at < from) continue;
+    if (s.at > to) break;
+    sum += s.value;
+    count += 1;
+  }
+  return count ? sum / count : undefined;
 }
 
 /** The mean in force at a moment: the last bucket that began before it, if recent enough to trust. */
@@ -211,16 +236,17 @@ export function learnBuffer(input: {
   top: Sample[];
   bottom: Sample[];
   curves: Sample[][];
+  outdoor?: Sample[];
   volume: number | undefined;
   now: number;
 }): BufferLearning {
-  const { modes, words, top, bottom, curves, volume, now } = input;
+  const { modes, words, top, bottom, curves, outdoor = [], volume, now } = input;
   const runs = heatingRuns(modes, words, now);
   // A run of a few minutes on a sunny afternoon hardly charges anything; only real charges end a discharge.
   const charges = runs.filter(([from, to]) => to - from > LONG_RUN);
   const offsets: number[] = [];
   const temps: number[] = [];
-  const draws: number[] = [];
+  const draws: Array<{ kw: number; from: number; to: number; air?: number }> = [];
   for (const [from] of runs) {
     // The five-minute bucket before the start, not the one the start already warms.
     const at = from - 5 * MINUTE;
@@ -234,8 +260,9 @@ export function learnBuffer(input: {
     if (!charged) continue;
     const hours = (from - charged.at) / HOUR;
     const kwh = (volume * 1.163 * (charged.mean - t)) / 1000;
-    if (hours >= 1 && kwh >= 0.5) draws.push(kwh / hours);
+    if (hours >= 1 && kwh >= 0.5) draws.push({ kw: kwh / hours, from: charged.at, to: from, air: meanBetween(outdoor, charged.at, from) });
   }
+  const last = draws.at(-1);
   const offset = median(offsets.slice(-7));
   return {
     offset: offsets.length >= 2 ? offset : undefined,
@@ -243,8 +270,43 @@ export function learnBuffer(input: {
     // The last night, not a median of the week: in autumn every night takes more than
     // the one before (0.29, 0.61, 0.74 kW over three September nights), and a median
     // lags the season by days. Two nights are still needed before anything is said.
-    draw: draws.length >= 2 ? draws[draws.length - 1] : undefined,
+    draw: draws.length >= 2 ? last?.kw : undefined,
+    drawFrom: last?.from,
+    drawTo: last?.to,
+    drawOutdoor: last?.air,
     starts: temps.length,
     discharges: draws.length
   };
+}
+
+/**
+ * How much more the house will take tonight than it took in the night that was learned.
+ *
+ * A house loses heat roughly with the gap between the rooms and the air outside, and in
+ * autumn every night is colder than the one before: the draw measured last night was
+ * right last night and is already too small today. What the coming night will bring is
+ * not known, but how it has started is — so the air of the last hours is compared with
+ * the air at the same hour of the learned discharge, and the whole night is taken to be
+ * that much colder or milder.
+ *
+ * One, when the two cannot be compared: the figure then stands as it was learned.
+ */
+export function weatherFactor(input: { learning: BufferLearning; outdoor: Sample[]; now: number }): number {
+  const { learning, outdoor, now } = input;
+  const { drawFrom, drawTo, drawOutdoor } = learning;
+  if (drawFrom === undefined || drawTo === undefined || drawOutdoor === undefined) return 1;
+  if (INDOOR - drawOutdoor < WEATHER_SPAN) return 1;
+  const nowAir = meanBetween(outdoor, now - WEATHER_WINDOW, now);
+  if (nowAir === undefined) return 1;
+  // The same hour of the day, within the learned discharge. Whole days back, so an hour
+  // lost or gained at a daylight-saving switch is the worst this can be out by.
+  let at = now;
+  while (at > drawTo) at -= 24 * HOUR;
+  if (at - WEATHER_WINDOW < drawFrom) return 1;
+  const thenAir = meanBetween(outdoor, at - WEATHER_WINDOW, at);
+  if (thenAir === undefined) return 1;
+  const expected = drawOutdoor + (nowAir - thenAir);
+  const factor = (INDOOR - expected) / (INDOOR - drawOutdoor);
+  if (!Number.isFinite(factor)) return 1;
+  return Math.min(WEATHER_LIMIT[1], Math.max(WEATHER_LIMIT[0], factor));
 }

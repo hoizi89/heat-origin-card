@@ -3,7 +3,7 @@ import { CARD_TYPE, assertConfig, resolveConfig, stubConfig } from "./config";
 import { W as DRAW_W, T, TL, textWidth, box, branch, bypass, connector, dial, spine, type BoxModel, type DialSegment, type Tone } from "./flow-draw";
 import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
-import { chargedAt, heatingRuns, learnBuffer, learnMarks, type BufferLearning, type LearnedMarks, type Sample } from "./learn";
+import { chargedAt, heatingRuns, learnBuffer, learnMarks, weatherFactor, type BufferLearning, type LearnedMarks, type Sample } from "./learn";
 import { localize } from "./localize";
 import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
@@ -161,7 +161,10 @@ export class HeatOriginCard extends LitElement {
   /** When each circuit last heated, by index, as far back as the recorder was asked. */
   private _lastHeat: Array<number | "now" | undefined> = [];
   /** Per buffer (by store index): what its last days taught, and the history it was taught from. */
-  private _learned: Record<number, { learning: BufferLearning; top: Sample[]; bottom: Sample[]; curves: Sample[][]; runs: Array<[number, number]> }> = {};
+  private _learned: Record<
+    number,
+    { learning: BufferLearning; top: Sample[]; bottom: Sample[]; curves: Sample[][]; outdoor: Sample[]; runs: Array<[number, number]> }
+  > = {};
   /** Per store (by index): the set-points its charges have been ending at. */
   private _learnedMarks: Record<number, LearnedMarks> = {};
   private _learnedAt = 0;
@@ -311,7 +314,9 @@ export class HeatOriginCard extends LitElement {
     const now = new Date();
     const start = new Date(now.getTime() - LAST_HEAT_DAYS * DAY).toISOString();
     const curveIds = config.circuits.map((c) => c.curve_flow).filter((id): id is string => Boolean(id));
-    const statIds = [...new Set([...stores.flatMap(({ store }) => [store.top, store.bottom]), ...curveIds].filter((id): id is string => Boolean(id)))];
+    const statIds = [
+      ...new Set([...stores.flatMap(({ store }) => [store.top, store.bottom]), ...curveIds, config.entities.outdoor].filter((id): id is string => Boolean(id)))
+    ];
     try {
       const [history, stats] = await Promise.all([
         hass.callWS({
@@ -340,12 +345,13 @@ export class HeatOriginCard extends LitElement {
           .sort((a, b) => a.at - b.at);
       const modes = parseHistory(history, config.entities.mode);
       const curves = curveIds.map((id) => series(id));
+      const outdoor = series(config.entities.outdoor);
       const learned: typeof this._learned = {};
       for (const { store, index } of buffers) {
         const top = series(store.top);
         const bottom = store.bottom ? series(store.bottom) : top;
-        const learning = learnBuffer({ modes, words: config.modes, top, bottom, curves, volume: store.volume, now: now.getTime() });
-        learned[index] = { learning, top, bottom, curves, runs: heatingRuns(modes, config.modes, now.getTime()) };
+        const learning = learnBuffer({ modes, words: config.modes, top, bottom, curves, outdoor, volume: store.volume, now: now.getTime() });
+        learned[index] = { learning, top, bottom, curves, outdoor, runs: heatingRuns(modes, config.modes, now.getTime()) };
       }
       this._learned = learned;
       const marks: typeof this._learnedMarks = {};
@@ -379,6 +385,18 @@ export class HeatOriginCard extends LitElement {
   }
 
   /**
+   * What the house is taking from a buffer now: the rate the last discharge showed,
+   * carried over to tonight's weather. Learned in September and read in November, the
+   * bare figure is too small by half; the air outside says by how much.
+   */
+  private _drawNow(store: StoreConfig & { kind: StoreKind }): number | undefined {
+    const config = this._config as ResolvedConfig;
+    const learned = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])];
+    if (!learned?.learning.draw) return undefined;
+    return learned.learning.draw * weatherFactor({ learning: learned.learning, outdoor: learned.outdoor, now: Date.now() });
+  }
+
+  /**
    * When the heat pump will have to start again, from the last full charge: the heat it
    * held above the start temperature, spent at the rate the house has been taking it.
    * Not from how fast the top sensor falls — in a layered buffer that sensor holds for
@@ -387,7 +405,7 @@ export class HeatOriginCard extends LitElement {
   private _startForecast(store: StoreConfig & { kind: StoreKind }): number | undefined {
     const config = this._config as ResolvedConfig;
     const learned = this._learned[config.stores.indexOf(store as ResolvedConfig["stores"][number])];
-    const draw = learned?.learning.draw;
+    const draw = this._drawNow(store);
     const threshold = this._startsAt(store);
     if (!learned || draw === undefined || threshold === undefined || !store.volume) return undefined;
     const now = Date.now();
@@ -413,6 +431,11 @@ export class HeatOriginCard extends LitElement {
     const parts = [this._t("learn.start", { t: formatTemp(threshold, this._locale) })];
     if (learning.draw !== undefined) {
       parts.push(this._t("learn.draw", { kw: formatPower(learning.draw, this._locale), n: String(learning.discharges) }));
+      // Only worth saying once the weather has moved the figure by more than rounding would.
+      const now = this._drawNow(store);
+      if (now !== undefined && Math.abs(now - learning.draw) >= 0.05) {
+        parts.push(this._t("learn.weather", { kw: formatPower(now, this._locale) }));
+      }
     }
     return parts.join(" · ");
   }

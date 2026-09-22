@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chargedAt, heatingRuns, learnBuffer, valueAt, type Sample } from "../src/learn";
+import { chargedAt, heatingRuns, learnBuffer, valueAt, weatherFactor, type Sample } from "../src/learn";
 import { resolveModes } from "../src/modes";
 
 const words = resolveModes(undefined);
@@ -82,5 +82,63 @@ describe("what a buffer teaches about itself", () => {
     const learned = learnBuffer({ modes: [p(9, "CH"), p(11, "STBY")], words, top: [{ at: h(8.9), value: 31 }], bottom: [], curves: [], volume: 300, now: h(12) });
     expect(learned.start).toBeUndefined();
     expect(learned.draw).toBeUndefined();
+  });
+});
+
+describe("the weather the learned draw is carried over to", () => {
+  /** Air at a steady `base`, `swing` colder each night, sampled every five minutes. */
+  const air = (base: number, from: number, to: number, shift = 0): Sample[] => {
+    const out: Sample[] = [];
+    for (let t = from; t < to; t += 5 / 60) out.push({ at: h(t), value: base + shift * Math.max(0, Math.floor(t / 24)) });
+    return out;
+  };
+
+  const learning = { drawFrom: h(16), drawTo: h(29), drawOutdoor: 10, draw: 0.6, starts: 4, discharges: 2 };
+
+  it("leaves the figure alone when tonight is as mild as the night that was learned", () => {
+    expect(weatherFactor({ learning, outdoor: air(10, 0, 48), now: h(44) })).toBeCloseTo(1, 2);
+  });
+
+  it("raises it when tonight is colder, by the share of the gap to the rooms", () => {
+    // Yesterday 10 °C at this hour, today 6 °C: the night is taken to be 6 °C, so (20−6)/(20−10).
+    const outdoor = [...air(10, 0, 36), ...air(6, 36, 48)];
+    expect(weatherFactor({ learning, outdoor, now: h(44) })).toBeCloseTo(1.4, 1);
+  });
+
+  it("lowers it when tonight is milder", () => {
+    const outdoor = [...air(10, 0, 36), ...air(14, 36, 48)];
+    expect(weatherFactor({ learning, outdoor, now: h(44) })).toBeCloseTo(0.6, 1);
+  });
+
+  it("never stretches the figure past what a season could explain", () => {
+    const outdoor = [...air(10, 0, 36), ...air(-25, 36, 48)];
+    expect(weatherFactor({ learning, outdoor, now: h(44) })).toBeLessThanOrEqual(1.8);
+  });
+
+  it("stands by the learned figure when there is nothing to compare", () => {
+    expect(weatherFactor({ learning: { starts: 0, discharges: 0 }, outdoor: air(6, 0, 48), now: h(44) })).toBe(1);
+    // Air only from today: the same hour of the learned night is not in the record.
+    expect(weatherFactor({ learning, outdoor: air(6, 40, 48), now: h(44) })).toBe(1);
+    // A learned night so cold that the gap to the rooms says nothing.
+    expect(weatherFactor({ learning: { ...learning, drawOutdoor: 19.5 }, outdoor: air(6, 0, 48), now: h(44) })).toBe(1);
+  });
+
+  it("remembers which discharge the draw came from, and how cold it was meanwhile", () => {
+    const top: Sample[] = [];
+    const bottom: Sample[] = [];
+    const modes = [];
+    for (let d = 0; d < 4; d += 1) {
+      const o = d * 24;
+      const built = day(o, [[0, 50], [5, 33], [9, 31], [11, 55], [20, 54], [24, 50]], [[0, 28], [9, 26], [11, 54], [13, 53], [18, 45], [20, 28], [24, 28]]);
+      top.push(...built.top);
+      bottom.push(...built.bottom);
+      modes.push(p(o + 9, "CH"), p(o + 11, "STBY"));
+    }
+    const curves = [Array.from({ length: 96 * 12 }, (_, i) => ({ at: h(i / 12), value: 28 }))];
+    const learned = learnBuffer({ modes, words, top, bottom, curves, outdoor: air(8, 0, 96), volume: 300, now: h(96) });
+    expect(learned.drawOutdoor).toBeCloseTo(8, 1);
+    expect(learned.drawFrom).toBeLessThan(learned.drawTo as number);
+    // The window is the last discharge, not the first.
+    expect(learned.drawTo).toBeGreaterThan(h(72));
   });
 });
