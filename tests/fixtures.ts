@@ -127,6 +127,8 @@ export function makeHass(overrides: Record<string, HassEntity> = {}, language = 
 
 export const FULL_CONFIG: HeatOriginCardConfig = {
   type: "custom:heat-origin-card",
+  // The classic two columns; the origin layout has its own tests.
+  layout: "columns",
   entities: { ...IDS },
   circuits: [
     {

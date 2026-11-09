@@ -21,7 +21,146 @@ export const cardStyles = css`
     --ho-track: var(--heat-origin-track-color, rgba(127, 133, 155, 0.22));
     --ho-surface: var(--ha-card-background, var(--card-background-color, #fff));
     --ho-mono: var(--code-font-family, ui-monospace, "SFMono-Regular", "Menlo", monospace);
+    --ho-legio-ok: var(--heat-origin-ok-color, #30d158);
+    --ho-legio-late: var(--heat-origin-late-color, #ff453a);
     display: block;
+  }
+
+  /* ── origin layout: one drawing that scales with the card ── */
+  .origin svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .origin text {
+    fill: var(--ho-ink);
+    font-family: var(--ho-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .origin .o-cap {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    fill: var(--ho-muted);
+  }
+  .origin .o-value {
+    font-size: 21px;
+    font-weight: 700;
+  }
+  .origin .o-big {
+    font-size: 27px;
+    font-weight: 700;
+  }
+  .origin .o-unit {
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .origin .o-small {
+    font-size: 11px;
+  }
+  .origin .o-muted {
+    fill: var(--ho-muted);
+  }
+  .origin .o-strong {
+    font-weight: 700;
+  }
+  .origin .o-reason {
+    fill: var(--ho-hot-water);
+    opacity: 0.85;
+  }
+  .origin .o-note {
+    font-size: 12px;
+    font-weight: 700;
+    fill: var(--ho-heating);
+  }
+  .origin .o-heat {
+    font-size: 30px;
+    font-weight: 700;
+  }
+  .origin .o-cop {
+    font-size: 13px;
+    font-weight: 700;
+    fill: var(--ho-muted);
+  }
+  .origin .o-pause {
+    font-size: 20px;
+    font-weight: 700;
+    fill: var(--ho-muted);
+  }
+  .origin .o-track {
+    stroke: var(--ho-track);
+  }
+  .origin .o-track-fill {
+    fill: var(--ho-track);
+  }
+  .origin .o-line {
+    fill: none;
+    stroke-width: 3;
+    stroke-dasharray: 2 6;
+    stroke-linecap: round;
+  }
+  .origin .o-line.idle {
+    stroke-width: 2;
+    stroke-dasharray: 2 5;
+    opacity: 0.4;
+  }
+  .origin .o-line.flowing {
+    animation: o-flow 1.2s linear infinite;
+  }
+  @keyframes o-flow {
+    to {
+      stroke-dashoffset: -16;
+    }
+  }
+  .origin .o-pill {
+    fill: rgba(0, 0, 0, 0.55);
+  }
+  .origin .o-pill-text {
+    fill: #fff;
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+  .origin .o-tick {
+    font-size: 9.5px;
+    fill: var(--ho-muted);
+  }
+  .origin .o-tank.active .o-rim {
+    filter: drop-shadow(0 0 5px var(--glow, var(--ho-heating)));
+  }
+  .origin .o-tank,
+  .origin .o-ring,
+  .origin .o-circuit,
+  .origin .o-badge {
+    cursor: pointer;
+  }
+  .origin .o-row {
+    fill: var(--ho-track);
+    stroke: var(--ho-hairline);
+    stroke-width: 1;
+  }
+  .origin .o-circuit.on .o-row {
+    fill: color-mix(in srgb, var(--ho-heating) 14%, transparent);
+    stroke: color-mix(in srgb, var(--ho-heating) 40%, transparent);
+  }
+  .origin .o-room {
+    font-size: 17px;
+    font-weight: 700;
+  }
+  .origin .o-circuit.off .o-room {
+    fill: var(--ho-muted);
+  }
+  .origin .o-flow {
+    fill: var(--ho-heating);
+  }
+  .origin .o-badge-text {
+    font-size: 10px;
+    font-weight: 700;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .origin .o-line.flowing {
+      animation: none;
+    }
   }
 
   /* The dashboard's own face for everything; digits keep equal widths so values do not jump. */

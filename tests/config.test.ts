@@ -25,8 +25,8 @@ describe("configuration", () => {
   it("gives every choice a word, and a nonsense word falls back", () => {
     const flow = resolveConfig(bare).flow;
     expect(flow).toMatchObject({
-      layout: "columns", labels: "short", circuit: "room", curve: false, gauge: "zones", scale: true, trend: "rate",
-      ring: "sun", centre: "heat", foot: "full", balance: true, buffer_line: "range", rest_colour: true
+      layout: "origin", labels: "short", circuit: "room", curve: false, gauge: "zones", scale: true, trend: "rate",
+      ring: "sun", centre: "heat", foot: "full", balance: true, buffer_line: "range", rest_colour: true, on_target: 0.5
     });
     expect(resolveConfig({ ...bare, flow: { gauge: "tank" as never, trend: "maybe" as never } }).flow).toMatchObject({ gauge: "zones", trend: "rate" });
   });
@@ -59,6 +59,9 @@ describe("configuration", () => {
     expect(resolveConfig({ ...bare, layout: "split" }).flow.layout).toBe("split");
     expect(resolveConfig({ ...bare, flow: { layout: "split" } }).flow.layout).toBe("split");
     expect(resolveConfig({ ...bare, layout: "columns", flow: { layout: "split" } }).flow.layout).toBe("columns");
+    // 2.0 opens on the origin layout; `classic` is the two columns every earlier version drew.
+    expect(resolveConfig(bare).flow.layout).toBe("origin");
+    expect(resolveConfig({ ...bare, layout: "classic" }).flow.layout).toBe("columns");
     const data = editorData({ ...bare, flow: { layout: "split" } });
     expect(data.layout).toBe("split");
     expect(data.flow).not.toHaveProperty("layout");

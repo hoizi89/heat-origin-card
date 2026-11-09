@@ -53,7 +53,7 @@ function foldCirculation(config: HeatOriginCardConfig) {
 
 /** The words each choice may take, in the order the editor lists them. */
 export const CHOICES = {
-  layout: ["columns", "split"],
+  layout: ["origin", "columns", "split"],
   labels: ["short", "icon", "name"],
   circuit: ["room", "room_plain", "flow"],
   gauge: ["zones", "scale", "bar", "box"],
@@ -98,7 +98,9 @@ function resolveFlow(flow: FlowOptions, layout: unknown): ResolvedFlow {
   const picked = flow.foot_items;
   return {
     // The layout is the card's, and the editor writes it at the root; `flow.layout` is where 1.0 kept it.
-    layout: oneOf(layout ?? flow.layout, CHOICES.layout, "columns"),
+    // 2.0 opens on the origin layout; `classic` is the two columns every earlier version drew.
+    layout: (layout ?? flow.layout) === "classic" ? "columns" : oneOf(layout ?? flow.layout, CHOICES.layout, "origin"),
+    on_target: typeof flow.on_target === "number" && flow.on_target >= 0 ? flow.on_target : 0.5,
     extras: flow.extras ?? [],
     labels: oneOf(flow.labels, CHOICES.labels, low ? "icon" : "short"),
     circuit: oneOf(flow.circuit, CHOICES.circuit, flow.target === false ? "room_plain" : "room"),
@@ -171,7 +173,7 @@ export function editorData(config: HeatOriginCardConfig): HeatOriginCardConfig &
   const flow: Record<string, unknown> = { ...(config.flow ?? {}) };
   for (const key of LEGACY_FLOW_KEYS) delete flow[key];
   // The foot's one word became a list of its parts; the form writes the list.
-  const { extras: _extras, foot: _foot, layout, ...choices } = resolved.flow;
+  const { extras: _extras, foot: _foot, layout, on_target: _onTarget, ...choices } = resolved.flow;
   // Every circuit and store as its own key, and one empty slot after each list: filled
   // in, it becomes the next entry; left empty, it is dropped on the way back.
   const circuits = config.circuits ?? [];
@@ -256,6 +258,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
   const degrees = (name: string) => ({ name, selector: { text: {} } });
   const text = (name: string) => ({ name, selector: { text: {} } });
   const grid = (schema: unknown[]) => ({ type: "grid", schema });
+  const share = (name: string) => ({ name, selector: { number: { min: 0, max: 1, step: 0.01, mode: "box" } } });
 
   const icons = () => words("icon", ["floor", "radiator", "fancoil", "pipe", "water", "buffer", "loop"]);
   // The last group of each list is empty: "add a circuit". Its title says so, and a name
@@ -269,6 +272,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
       grid([icons(), text("short")]),
       grid([{ name: "top", selector: sensor }, { name: "bottom", selector: sensor }]),
       grid([{ name: "volume", selector: { number: { min: 0, max: 5000, step: 10, mode: "box", unit_of_measurement: "l" } } }, degrees("usable_min"), degrees("usable_max")]),
+      grid([share("top_height"), share("bottom_height")]),
       { type: "expandable", name: "marks", title: t("editor.marks"), schema: [grid(MARKS.map(degrees))] },
       grid([{ name: "circulation", selector: sensor }, { name: "circulation_pump", selector: onOff }]),
       words("due_at", ["eco", "target", "pv", "max"])
@@ -310,10 +314,12 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
       title: t("editor.group_pump_sensors"),
       schema: [
         { name: "mode", required: true, selector: sensor },
+        { name: "hot_water_reason", selector: { entity: {} } },
         grid(
           [
             "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop", "pv_mode",
-            "heating_heat_today", "heating_electric_today", "hot_water_heat_today", "hot_water_electric_today", "heat_today", "electric_today"
+            "heating_heat_today", "heating_electric_today", "hot_water_heat_today", "hot_water_electric_today", "heat_today", "electric_today",
+            "legionella_days"
           ].map((name) => ({ name, selector: sensor }))
         )
       ]
@@ -357,7 +363,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
     "scale", "trend", "rest_colour", "buffer_line", "foot_items", "chips", "balance", "running", "rest_note", "store_head",
     "name", "kind", "top", "bottom", "volume", "usable_min", "usable_max", "circulation", "circulation_pump", "due_at",
-    "short", "state", "pump", "room", "target_room", "curve_flow", "icon"
+    "short", "state", "pump", "room", "target_room", "curve_flow", "icon", "hot_water_reason", "legionella_days", "top_height", "bottom_height"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
   const helped = ["show_title", "pv_mode", "mode", "source", "wide_from", "volume", "usable_min", "usable_max", "eco", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance", "chips", "foot_items", "rest_note"];

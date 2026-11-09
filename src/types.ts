@@ -100,6 +100,10 @@ export interface HeatOriginEntities {
   /** Totals, for heat pumps that do not split by mode. */
   heat_today?: string;
   electric_today?: string;
+  /** Why the hot water set-point is what it is, e.g. an input_text an automation writes ("Midday sun -> 50 Grad"); the part before " -> " is shown. */
+  hot_water_reason?: string;
+  /** Days since the hot water was last held at 60 °C; with it a badge says when that was. */
+  legionella_days?: string;
 }
 
 export interface CircuitConfig {
@@ -163,6 +167,16 @@ export interface StoreConfig {
   usable_max?: Setting;
   icon?: string;
   short?: string;
+  /** Height of the top sensor as a share of the water column (0 bottom, 1 top), for the origin layout. */
+  top_height?: number;
+  /** Height of the bottom sensor, the same way. */
+  bottom_height?: number;
+  /** Hot water: what the origin layout counts, litres of shower water or kWh. Litres by default. */
+  usable?: "liters" | "kwh";
+  /** Hot water: the temperature the tap mixes to, 38 °C by default. */
+  mix?: number;
+  /** Hot water: the cold water it mixes with, 10 °C by default. */
+  cold?: number;
 }
 
 export interface ExtraFigure {
@@ -223,6 +237,8 @@ export interface FlowOptions {
   store_head?: StoreHead;
   /** A resting box keeps its symbol in its own colour instead of greying out with its state. */
   rest_colour?: boolean;
+  /** Origin layout: kelvin a running circuit's flow may be off its curve and still count as on target. 0.5 by default. */
+  on_target?: number;
 
   /** @deprecated Read as `foot: no_spread`. */
   spread?: boolean;
@@ -257,7 +273,7 @@ export interface HeatOriginCardConfig {
    * the buffer's line to its circuits is a run down the column. `split`: stores left,
    * circuits right, the heat pump between them.
    */
-  layout?: "columns" | "split";
+  layout?: "origin" | "columns" | "split" | "classic";
   shape?: CardShape;
   entities: HeatOriginEntities;
   modes?: ModeWords;
@@ -284,7 +300,8 @@ export interface HeatOriginCardConfig {
 }
 
 export interface ResolvedFlow {
-  layout: "columns" | "split";
+  layout: "origin" | "columns" | "split";
+  on_target: number;
   extras: ExtraFigure[];
   labels: LabelStyle;
   circuit: CircuitFace;

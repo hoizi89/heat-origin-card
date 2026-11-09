@@ -5,6 +5,7 @@ import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
 import { chargedAt, heatingRuns, learnBuffer, learnMarks, weatherFactor, type BufferLearning, type LearnedMarks, type Sample } from "./learn";
 import { localize } from "./localize";
+import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, edgeAt, ringArcs, showerLitres, tempTone, usableKwh, type Heights } from "./origin";
 import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
 import {
@@ -987,12 +988,20 @@ export class HeatOriginCard extends LitElement {
         const hours = (ceiling - top) / rise;
         return hours <= 8 ? Date.now() + hours * 3600_000 : undefined;
       })();
+      // Hot water whose set-point is steered from outside (a controller, an automation) says
+      // where it is headed: the scale's notch is too small to read across a room.
+      const goal = store.kind === "hot_water" ? set.target : undefined;
+      const goalText = goal === undefined ? "" : `${goal % 1 === 0 ? formatNumber(goal, locale, 0) : formatTemp(goal, locale)}°`;
       const word = charging
         ? fullAt === undefined
-          ? this._t("flow.charging")
+          ? goal === undefined
+            ? this._t("flow.charging")
+            : `${this._t("flow.charging")} → ${goalText}`
           : `${this._t("flow.charging")} · ${this._t("flow.full_at", { time: clock(new Date(fullAt), locale) })}`
         : !draining
-          ? store.name
+          ? goal === undefined
+            ? store.name
+            : `${this._t("mark.target")} ${goalText}`
           : head === "left" && lasts
             ? this._startForecast(store) !== undefined ? lasts : `≈ ${lasts}`
             : head === "draw"
@@ -1386,8 +1395,322 @@ export class HeatOriginCard extends LitElement {
       });
   }
 
+  // ─── origin layout ─────────────────────────────────────────
+
+  /** Several entities on one history page; a single one opens its more-info dialog. */
+  private _history(ids: Array<string | number | undefined>) {
+    const list = [...new Set(ids.filter((id): id is string => typeof id === "string" && id.includes(".")))];
+    if (!list.length) return;
+    if (list.length === 1) {
+      this._moreInfo(list[0]);
+      return;
+    }
+    window.history.pushState(null, "", `/history?entity_id=${encodeURIComponent(list.join(","))}`);
+    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+  }
+
+  private _heights(store: StoreConfig & { kind: StoreKind }): Heights {
+    const fallback = store.kind === "hot_water" ? HOT_WATER_HEIGHTS : BUFFER_HEIGHTS;
+    const ok = (v: unknown) => typeof v === "number" && v >= 0 && v <= 1;
+    const top = ok(store.top_height) ? (store.top_height as number) : fallback.top;
+    const bottom = ok(store.bottom_height) ? (store.bottom_height as number) : fallback.bottom;
+    return top > bottom ? { top, bottom } : fallback;
+  }
+
+  /** "h:mm h" for the day block. */
+  private _hmText(minutes: number): string {
+    const m = Math.round(minutes);
+    return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")} ${this._t("day.hours")}`;
+  }
+
+  /**
+   * A store standing upright: two colour zones split where its water stops being usable,
+   * a thin dark line on that edge, both temperatures at the height of their sensor.
+   */
+  private _originTank(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    store: ResolvedConfig["stores"][number],
+    tone: string,
+    active: boolean,
+    threshold: number
+  ) {
+    const heights = this._heights(store);
+    const top = this._num(store.top);
+    const bottom = store.bottom ? this._num(store.bottom) : undefined;
+    const edge = edgeAt(top, bottom ?? top, heights, threshold);
+    const cut = y + h * (1 - edge);
+    const clip = `ho-tank-${store.kind}-${x}`;
+    const target = store.marks?.target;
+    const pills = ([
+      [heights.top, top],
+      [heights.bottom, bottom]
+    ] as Array<[number, number | undefined]>)
+      .filter(([, v]) => v !== undefined)
+      .map(([f, v]) => {
+        const yy = y + h * (1 - f);
+        return svg`<rect x=${x + 4} y=${yy - 10} width=${w - 8} height="20" rx="6" class="o-pill"/>
+          <text x=${x + w / 2} y=${yy + 4.5} text-anchor="middle" class="o-pill-text">${this._one(v as number)}°</text>`;
+      });
+    return svg`<g class="o-tank ${active ? "active" : ""}" style="--glow:${tone}" @click=${() => this._history([store.top, store.bottom, typeof target === "string" ? target : undefined])}>
+      <title>${store.name}</title>
+      <defs><clipPath id=${clip}><rect x=${x} y=${y} width=${w} height=${h} rx=${w / 2}/></clipPath></defs>
+      <g clip-path="url(#${clip})">
+        <rect x=${x} y=${y} width=${w} height=${Math.max(0, cut - y)} fill=${tempTone(top)}/>
+        <rect x=${x} y=${cut} width=${w} height=${Math.max(0, y + h - cut)} fill=${tempTone(bottom ?? top)}/>
+        ${edge > EDGE_MIN && edge < 1 ? svg`<rect x=${x} y=${cut - 1} width=${w} height="2" fill="#111"/>` : nothing}
+      </g>
+      <rect x=${x - 3} y=${y - 3} width=${w + 6} height=${h + 6} rx=${w / 2 + 3} fill="none" stroke=${tone} stroke-width=${active ? 2 : 1.5} class="o-rim"/>
+      ${edge > EDGE_MIN && edge < 1
+        ? svg`<text x=${x + w + 5} y=${cut + 3} class="o-tick">${formatNumber(threshold, this._locale, 0)}°</text>`
+        : nothing}
+      ${pills}
+    </g>`;
+  }
+
+  /**
+   * Where the heat comes from and where it goes, read top to bottom. Top: electricity
+   * (and where it comes from) and ambient heat, flowing into the ring that adds them up.
+   * Middle: the two stores. Bottom: the day, and each circuit in one line.
+   */
+  private _renderOrigin() {
+    const config = this._config as ResolvedConfig;
+    const locale = this._locale;
+    const mode = this._mode();
+    const running = isRunning(mode.kind);
+    const live = this._live();
+    const heat = running ? Math.max(0, live.heat ?? 0) : 0;
+    const electric = running ? Math.max(0, live.electric ?? 0) : 0;
+    const air = Math.max(0, heat - electric);
+    const shares = running ? this._shares(live.electric) : undefined;
+    const outdoor = this._num(config.entities.outdoor);
+    const cx = 226;
+    const cy = 86;
+    const r = 54;
+    const out: TemplateResult[] = [];
+    const t = (x: number, y: number, text: unknown, cls: string, anchor: "start" | "middle" | "end" = "start", fill?: string) =>
+      svg`<text x=${x} y=${y} class=${cls} text-anchor=${anchor} style=${fill ? `fill:${fill}` : ""}>${text}</text>`;
+
+    // ── top: electricity left, ambient heat right ──
+    out.push(t(16, 26, this._t("origin.power").toUpperCase(), "o-cap"));
+    out.push(svg`<text x="16" y="52" class="o-value">${formatPower(electric, locale)}<tspan class="o-unit"> kW</tspan></text>`);
+    if (running && electric > 0.02) {
+      const split = (["solar", "battery", "grid"] as ElectricSource[]).map((s) => [s, shares?.[s] ?? 0] as const).filter(([, v]) => v > 0.005);
+      const total = split.reduce((a, [, v]) => a + v, 0);
+      let at = 16;
+      const bars = total
+        ? split.map(([s, v]) => {
+            const width = (112 * v) / total;
+            const bar = svg`<rect x=${at} y="62" width=${width} height="6" fill=${SOURCE_TONE[s]}/>`;
+            at += width;
+            return bar;
+          })
+        : [svg`<rect x="16" y="62" width="112" height="6" fill="var(--ho-power)"/>`];
+      out.push(svg`<g clip-path="url(#ho-bar-now)">${bars}</g>`);
+      if (total) {
+        out.push(svg`<text x="16" y="82" class="o-small">${split.map(
+          ([s, v], i) => svg`<tspan style="fill:${SOURCE_TONE[s]}">${i ? " · " : ""}${formatPower((electric * v) / total, locale)} ${this._t(`origin.src_${s}`)}</tspan>`
+        )}</text>`);
+      }
+      if (heat > 0) out.push(t(16, 98, this._t("origin.share", { p: String(Math.round((100 * electric) / heat)) }), "o-small o-muted"));
+    } else out.push(t(16, 76, this._t("origin.idle"), "o-small o-muted"));
+
+    out.push(t(436, 26, this._t("origin.ambient").toUpperCase(), "o-cap", "end"));
+    out.push(svg`<text x="436" y="52" text-anchor="end" class="o-value" style="fill:${running ? "var(--ho-air)" : "var(--ho-muted)"}">${formatPower(air, locale)}<tspan class="o-unit"> kW</tspan></text>`);
+    if (outdoor !== undefined) out.push(t(436, 72, this._t(`origin.${config.source}`, { t: this._one(outdoor) }), "o-small o-muted", "end"));
+    if (running && heat > 0) out.push(t(436, 88, this._t("origin.share", { p: String(Math.round((100 * air) / heat)) }), "o-small", "end", "var(--ho-air)"));
+
+    // The lines arrive exactly at their own arc: electricity on the left, ambient heat on the right.
+    const sun = this._dominant(shares);
+    out.push(svg`<path d="M134 44 C152 44 150 ${cy} ${cx - r - 6} ${cy}" class="o-line ${running ? "flowing" : ""}" style="stroke:${sun ? SOURCE_TONE[sun] : "var(--ho-power)"}"/>`);
+    out.push(svg`<path d="M346 44 C302 44 302 ${cy} ${cx + r + 6} ${cy}" class="o-line ${running ? "flowing" : ""}" style="stroke:var(--ho-air)"/>`);
+
+    // The ring: electricity plus ambient heat is the heat.
+    const C = 2 * Math.PI * r;
+    const arcTone: Record<string, string> = { air: "var(--ho-air)", power: "var(--ho-power)", ...SOURCE_TONE };
+    const arcs = ringArcs(heat, electric, shares).map(
+      (a) => svg`<circle cx=${cx} cy=${cy} r=${r} fill="none" stroke=${arcTone[a.part]} stroke-width="10"
+        stroke-dasharray="${((C * a.length) / 360).toFixed(1)} ${C.toFixed(1)}" transform="rotate(${a.start.toFixed(1)} ${cx} ${cy})"/>`
+    );
+    const flowT = this._num(config.entities.flow);
+    const retT = this._num(config.entities.return);
+    const volume = this._num(config.entities.volume_flow);
+    const hint =
+      flowT !== undefined && retT !== undefined
+        ? this._t("origin.pump_hint", {
+            k: this._one(flowT - retT),
+            v: volume === undefined ? "" : `${formatNumber(volume, locale, 0)} ${unitOf(stateOf(this.hass, config.entities.volume_flow)) || "l/h"}`
+          })
+        : "";
+    out.push(svg`<g class="o-ring" @click=${() => this._moreInfo(config.entities.mode)}>
+      <title>${hint}</title>
+      <circle cx=${cx} cy=${cy} r=${r} fill="none" class="o-track" stroke-width="10"/>
+      ${arcs}
+      ${running
+        ? svg`<text x=${cx} y=${cy + 2} text-anchor="middle" class="o-heat">${formatNumber(heat, locale, 1)}</text>
+            <text x=${cx} y=${cy + 18} text-anchor="middle" class="o-cap">${this._t("origin.heat")}</text>
+            ${live.cop !== undefined ? svg`<text x=${cx} y=${cy + 34} text-anchor="middle" class="o-cop">COP ${this._one(live.cop)}</text>` : nothing}`
+        : svg`<text x=${cx} y=${cy + 7} text-anchor="middle" class="o-pause">${this._t("origin.pause")}</text>`}
+    </g>`);
+    if (running && flowT !== undefined) {
+      out.push(t(cx, 162, this._t("origin.pump", { flow: this._one(flowT), ret: retT === undefined ? "–" : this._one(retT) }), "o-small o-muted", "middle"));
+    } else if (!running && mode.since !== undefined && Date.now() - mode.since < DAY) {
+      out.push(t(cx, 162, this._t("origin.paused_since", { time: clock(new Date(mode.since), locale) }), "o-small o-muted", "middle"));
+    }
+
+    // ── middle: the stores ──
+    const hw = config.stores.find((s) => s.kind === "hot_water");
+    const buf = config.stores.find((s) => s.kind === "buffer");
+    const tankY = 196;
+    const tankH = 112;
+    if (hw) {
+      const active = mode.kind === "hot_water";
+      out.push(svg`<path d="M${cx} 170 L${cx} 180 L186 180 L186 190" class="o-line ${active ? "flowing" : "idle"}" style="stroke:var(--ho-hot-water)"/>`);
+      const mix = typeof hw.mix === "number" ? hw.mix : 38;
+      const cold = typeof hw.cold === "number" ? hw.cold : 10;
+      const litresMode = hw.usable !== "kwh";
+      const floor = this._floor(hw);
+      out.push(this._originTank(160, tankY, 52, tankH, hw, "var(--ho-hot-water)", active, litresMode ? mix + 1 : floor));
+      const top = this._num(hw.top);
+      const bottom = hw.bottom ? this._num(hw.bottom) : undefined;
+      const x = 146;
+      out.push(t(x, tankY + 8, hw.name.toUpperCase(), "o-cap", "end", "var(--ho-hot-water)"));
+      if (litresMode) {
+        const litres = showerLitres({ top, bottom, heights: this._heights(hw), volume: hw.volume, mix, cold });
+        if (litres !== undefined) {
+          out.push(svg`<text x=${x} y=${tankY + 38} text-anchor="end" class="o-big">≈ ${formatNumber(Math.round(litres / 10) * 10, locale, 0)}<tspan class="o-unit"> l</tspan></text>`);
+          out.push(t(x, tankY + 56, this._t("origin.shower", { t: formatNumber(mix, locale, 0) }), "o-small o-muted", "end"));
+        }
+      } else {
+        const usable = usableKwh(top, bottom, this._heights(hw), hw.volume, floor);
+        if (usable !== undefined) {
+          out.push(svg`<text x=${x} y=${tankY + 38} text-anchor="end" class="o-big">${this._one(usable)}<tspan class="o-unit"> kWh</tspan></text>`);
+          out.push(t(x, tankY + 56, this._t("origin.kwh_usable", { t: formatNumber(floor, locale, 0) }), "o-small o-muted", "end"));
+        }
+      }
+      const target = this._marks(hw).target;
+      if (target !== undefined) out.push(t(x, tankY + 74, this._t("origin.target", { t: formatNumber(target, locale, 0) }), "o-small o-strong", "end", "var(--ho-hot-water)"));
+      const reasonRaw = stateOf(this.hass, config.entities.hot_water_reason)?.state;
+      const reason = reasonRaw && !["unknown", "unavailable", ""].includes(reasonRaw) ? reasonRaw.split(" -> ")[0].trim() : undefined;
+      if (reason) out.push(svg`<text x=${x} y=${tankY + 89} text-anchor="end" class="o-small o-reason"><title>${reasonRaw}</title>${reason.length > 26 ? `${reason.slice(0, 25)}…` : reason}</text>`);
+      const days = this._num(config.entities.legionella_days);
+      if (days !== undefined) {
+        const words = days < 1 ? this._t("origin.legio_today") : days < 2 ? this._t("origin.legio_one") : this._t("origin.legio", { n: String(Math.floor(days)) });
+        const tone = days >= 10 ? "var(--ho-legio-late)" : days >= 5 ? "var(--ho-warn)" : "var(--ho-legio-ok)";
+        const width = words.length * 5.6 + 16;
+        out.push(svg`<g class="o-badge" @click=${() => this._moreInfo(config.entities.legionella_days)}>
+          <rect x=${x - width} y=${tankY + 98} width=${width} height="15" rx="7.5" fill="none" stroke=${tone}/>
+          <text x=${x - width / 2} y=${tankY + 109} text-anchor="middle" class="o-badge-text" style="fill:${tone}">${words}</text>
+        </g>`);
+      }
+    }
+    const carried = this._fromBuffer();
+    if (buf) {
+      const charging = mode.kind === "heating";
+      const draining = carried?.store === buf;
+      out.push(svg`<path d="M${cx} 170 L${cx} 180 L266 180 L266 190" class="o-line ${charging ? "flowing" : "idle"}" style="stroke:var(--ho-heating)"/>`);
+      const floor = this._floor(buf);
+      out.push(this._originTank(240, tankY, 52, tankH, buf, "var(--ho-heating)", charging, floor));
+      const x = 318;
+      const state = charging ? this._t("origin.charging") : draining ? this._t("origin.giving") : "";
+      out.push(t(x, tankY + 8, `${buf.name.toUpperCase()}${state ? ` · ${state.toUpperCase()}` : ""}`, "o-cap", "start", "var(--ho-heating)"));
+      const usable = usableKwh(this._num(buf.top), buf.bottom ? this._num(buf.bottom) : undefined, this._heights(buf), buf.volume, floor);
+      if (usable !== undefined) out.push(svg`<text x=${x} y=${tankY + 38} class="o-big">${this._one(usable)}<tspan class="o-unit"> kWh</tspan></text>`);
+      out.push(t(x, tankY + 56, this._t("origin.usable_to", { t: formatNumber(floor, locale, 0) }), "o-small o-muted"));
+      let note: string | undefined;
+      const top = this._num(buf.top);
+      if (charging && this._pvMode() && top !== undefined) {
+        const ceiling = this._ceiling(buf, floor, top);
+        const fall = this._drift(buf, true);
+        const rise = fall === undefined ? undefined : -fall;
+        if (rise !== undefined && rise >= 1 && ceiling - top >= 0.3) {
+          const hours = (ceiling - top) / rise;
+          if (hours <= 8) note = this._t("flow.full_at", { time: clock(new Date(Date.now() + hours * 3600_000), locale) });
+        }
+      } else if (!charging) note = this._lasts(buf, floor);
+      if (note) out.push(svg`<text x=${x} y=${tankY + 75} class="o-note"><title>${this._learnedHint(buf)}</title>${note}</text>`);
+    }
+
+    // ── bottom: the day, and where the heat goes ──
+    const today = this._days()?.at(-1);
+    const e = config.entities;
+    const kwh = (id: string | undefined) => energyKwh(stateOf(this.hass, id));
+    const elecSum = (kwh(e.heating_electric_today) ?? 0) + (kwh(e.hot_water_electric_today) ?? 0) + (kwh(e.electric_today) ?? 0);
+    const heatSum = (kwh(e.heating_heat_today) ?? 0) + (kwh(e.hot_water_heat_today) ?? 0) + (kwh(e.heat_today) ?? 0);
+    const dayY = 334;
+    const dayLines: string[] = [];
+    const first = [
+      elecSum > 0.05 ? this._t("origin.day_power", { kwh: this._one(elecSum) }) : "",
+      elecSum > 0.05 && heatSum > 0 ? this._t("origin.day_az", { az: this._one(heatSum / elecSum) }) : ""
+    ].filter(Boolean);
+    if (first.length) dayLines.push(first.join(" · "));
+    if (today) {
+      const second = [
+        (today.minutes.heating ?? 0) >= 1 ? this._t("origin.day_heating", { t: this._hmText(today.minutes.heating ?? 0) }) : "",
+        (today.minutes.hot_water ?? 0) >= 1 ? this._t("origin.day_water", { t: this._hmText(today.minutes.hot_water ?? 0) }) : ""
+      ].filter(Boolean);
+      if (second.length) dayLines.push(second.join(" · "));
+      dayLines.push(today.starts === 1 ? this._t("origin.day_start") : this._t("origin.day_starts", { n: String(today.starts) }));
+    }
+    if (dayLines.length) {
+      out.push(t(16, dayY, this._t("origin.today").toUpperCase(), "o-cap"));
+      dayLines.forEach((line, i) => out.push(t(16, dayY + 18 + i * 16, line, i === 0 ? "o-small o-strong" : "o-small o-muted")));
+    }
+
+    const circuits = config.circuits.filter((c) => c.kind === "heating");
+    const anyOn = circuits.some((c) => this._circuitActive(c));
+    if (buf && circuits.length) out.push(svg`<path d="M266 312 L266 318 L332 318 L332 326" class="o-line ${anyOn ? "flowing" : "idle"}" style="stroke:var(--ho-heating)"/>`);
+    circuits.forEach((c, i) => {
+      const x = 228;
+      const y = 328 + i * 36;
+      const w = 208;
+      const on = this._circuitActive(c);
+      const room = this._num(c.room);
+      const flow = this._num(c.flow);
+      const curve = this._num(c.curve_flow);
+      let status: TemplateResult;
+      if (on) {
+        const dev = flow !== undefined && curve !== undefined && curve > 5 ? flow - curve : undefined;
+        const ok = dev === undefined || Math.abs(dev) <= config.flow.on_target;
+        const tone = ok ? "var(--ho-legio-ok)" : "var(--ho-warn)";
+        const words = ok ? this._t("origin.on_target") : `${dev! > 0 ? "+" : "−"}${this._one(Math.abs(dev!))} K`;
+        status = svg`<text x=${x + w - 22} y=${y + 19} text-anchor="end" class="o-small" style="fill:${tone}">${words}</text>
+          <circle cx=${x + w - 12} cy=${y + 15} r="4" fill=${tone}/>`;
+      } else {
+        const index = config.circuits.indexOf(c);
+        const last = this._lastHeat[index];
+        let words = this._t("origin.off");
+        if (typeof last === "number") {
+          const days = Math.round((midnight(new Date()) - midnight(new Date(last))) / DAY);
+          words = days <= 0 ? this._t("origin.off_since", { time: clock(new Date(last), locale) }) : days === 1 ? this._t("origin.off_yesterday") : this._t("origin.off");
+        }
+        status = t(x + w - 10, y + 19, words, "o-small o-muted", "end");
+      }
+      out.push(svg`<g class="o-circuit ${on ? "on" : "off"}" @click=${() => this._history([c.room, c.flow, c.curve_flow])}>
+        <title>${c.name}</title>
+        <rect x=${x} y=${y} width=${w} height="30" rx="8" class="o-row"/>
+        <text x=${x + 10} y=${y + 19} class="o-cap" style="fill:${on ? "var(--ho-heating)" : "var(--ho-muted)"}">${c.short || c.name.slice(0, 3).toUpperCase()}</text>
+        ${room !== undefined ? svg`<text x=${x + 38} y=${y + 21} class="o-room">${this._one(room)}°</text>` : nothing}
+        ${on && flow !== undefined ? svg`<text x=${x + 98} y=${y + 19} class="o-small o-flow">VL ${this._one(flow)}°</text>` : nothing}
+        ${status}
+      </g>`);
+    });
+
+    const height = Math.max(dayLines.length ? dayY + 18 + dayLines.length * 16 : 0, circuits.length ? 328 + circuits.length * 36 : 0, tankY + tankH + 8) + 8;
+    return html`<div class="origin">
+      <svg viewBox="0 0 452 ${height}" role="img" aria-label=${this._t("card.title")}>
+        <defs><clipPath id="ho-bar-now"><rect x="16" y="62" width="112" height="6" rx="3"/></clipPath></defs>
+        <rect x="16" y="62" width="112" height="6" rx="3" class="o-track-fill" style=${running && electric > 0.02 ? "" : "display:none"}/>
+        ${out}
+      </svg>
+    </div>`;
+  }
+
   private _renderFlow() {
     const config = this._config as ResolvedConfig;
+    if (config.flow.layout === "origin") return this._renderOrigin();
     if (this._wide) return this._renderSplit(WIDE);
     if (config.flow.layout === "columns" && !this._narrow) return this._renderColumns();
     return this._renderSplit(SPLIT);
