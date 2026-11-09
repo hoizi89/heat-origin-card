@@ -35,29 +35,30 @@ export const cardStyles = css`
   }
   .origin text {
     fill: var(--ho-ink);
-    font-family: var(--ho-mono);
+    /* The body font, not monospace: proportional letters leave room for larger type on a wall tablet. */
+    font-family: var(--ha-font-family-body, var(--paper-font-body1_-_font-family, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif));
     font-variant-numeric: tabular-nums;
   }
   .origin .o-cap {
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 700;
     letter-spacing: 0.09em;
     fill: var(--ho-muted);
   }
   .origin .o-value {
-    font-size: 21px;
+    font-size: 23px;
     font-weight: 700;
   }
   .origin .o-big {
-    font-size: 27px;
+    font-size: 29px;
     font-weight: 700;
   }
   .origin .o-unit {
-    font-size: 12px;
+    font-size: 13.5px;
     font-weight: 600;
   }
   .origin .o-small {
-    font-size: 11px;
+    font-size: 13px;
   }
   .origin .o-muted {
     fill: var(--ho-muted);
@@ -70,21 +71,21 @@ export const cardStyles = css`
     opacity: 0.85;
   }
   .origin .o-note {
-    font-size: 12px;
+    font-size: 13.5px;
     font-weight: 700;
     fill: var(--ho-heating);
   }
   .origin .o-heat {
-    font-size: 30px;
+    font-size: 31px;
     font-weight: 700;
   }
   .origin .o-cop {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     fill: var(--ho-muted);
   }
   .origin .o-pause {
-    font-size: 20px;
+    font-size: 21px;
     font-weight: 700;
     fill: var(--ho-muted);
   }
@@ -118,11 +119,11 @@ export const cardStyles = css`
   }
   .origin .o-pill-text {
     fill: #fff;
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 700;
   }
   .origin .o-tick {
-    font-size: 9.5px;
+    font-size: 11px;
     fill: var(--ho-muted);
   }
   .origin .o-tank.active .o-rim {
@@ -144,7 +145,7 @@ export const cardStyles = css`
     stroke: color-mix(in srgb, var(--ho-heating) 40%, transparent);
   }
   .origin .o-room {
-    font-size: 17px;
+    font-size: 19px;
     font-weight: 700;
   }
   .origin .o-circuit.off .o-room {
@@ -154,7 +155,7 @@ export const cardStyles = css`
     fill: var(--ho-heating);
   }
   .origin .o-badge-text {
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 700;
   }
   .origin .o-edge {

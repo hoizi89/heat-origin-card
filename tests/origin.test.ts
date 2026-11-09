@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from "vitest";
 import { CARD_TYPE } from "../src/config";
-import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, calendarDays, edgeAt, edgeLabelY, pillCentres, ringArcs, showerLitres, tempTone, usableKwh } from "../src/origin";
+import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, calendarDays, edgeAt, edgeLabelY, pillCentres, ringArcs, showerLitres, tempTone, usableKwh, wrapText } from "../src/origin";
 import type { HeatOriginCardConfig, HomeAssistant } from "../src/types";
 import { FULL_CONFIG, IDS, makeHass } from "./fixtures";
 
@@ -206,5 +206,23 @@ describe("calendar days", () => {
     const last = new Date(2026, 9, 30, 15, 55).getTime();
     expect(calendarDays(last, new Date(2026, 10, 9, 10, 58).getTime())).toBe(10);
     expect(calendarDays(last, new Date(2026, 9, 30, 23, 0).getTime())).toBe(0);
+  });
+});
+
+describe("wrapped stage text", () => {
+  it("breaks at spaces and never runs past the column", () => {
+    expect(wrapText("Grundstellung ohne Sonne", 18)).toEqual(["Grundstellung ohne", "Sonne"]);
+    expect(wrapText("Mittag mit Sonne", 18)).toEqual(["Mittag mit Sonne"]);
+    const lines = wrapText("Sonne kommt noch, nur Notladung bis morgen früh", 18);
+    expect(lines.length).toBe(2);
+    expect(lines.every((l) => l.length <= 18)).toBe(true);
+    expect(lines[1].endsWith("…")).toBe(true);
+    expect(wrapText("Legionellenschaltungsprogramm", 18)[0].length).toBeLessThanOrEqual(18);
+  });
+});
+
+describe("wrapped units", () => {
+  it("keeps a unit with its number", () => {
+    expect(wrapText("usable down to 29 °C", 17)).toEqual(["usable down to", "29\u00a0°C"]);
   });
 });

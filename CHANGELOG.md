@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3
+
+- **Readable from across the room.** The origin layout uses the dashboard's body font instead of monospace, and its type is larger: small text 11 → 13, captions 10 → 11.5, readings in the tanks 12.5 → 14, badge 10 → 11.5, edge label 9.5 → 11, headline values 21 → 23 and 27 → 29, room temperatures 17 → 19.
+- **More room, nothing overlaps.** The tanks are taller, the circuit rows higher, and the picture grows downwards with its content. The electricity sources get one line each, the buffer's state moves under its usable heat, and the day block puts its parts on separate lines when they would reach the circuit rows.
+- **Long stage texts wrap.** The hot water stage ("Grundstellung ohne Sonne") wraps onto a second line and ends in an ellipsis only if it needs a third; it never runs past its column. A unit stays with its number.
+- The classic layout is unchanged.
+
 ## 2.0.2
 
 - **Buffer: usable from what the circuits ask now.** The buffer counts its heat above the warmest flow target of the circuits that are on, not above a fixed or learned floor. "0.0 kWh" no longer shows while the floor heating, asking for 29 °C, still draws from a 34 °C buffer. The forecast keeps its learned floor.

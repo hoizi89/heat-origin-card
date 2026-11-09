@@ -154,7 +154,7 @@ export function ringArcs(heat: number, electric: number, shares: Partial<Record<
 }
 
 /** Height of a reading's pill in the tank. */
-export const PILL_H = 20;
+export const PILL_H = 22;
 
 /**
  * Where the pills go: at their sensor's height, clamped into the straight part of the
@@ -199,4 +199,37 @@ export function calendarDays(last: number, now: number): number {
     return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
   };
   return Math.round((day(now) - day(last)) / 86_400_000);
+}
+
+/**
+ * Splits a text into at most `maxLines` lines of about `maxChars` characters each, breaking at
+ * spaces. A word longer than a line is cut; text that does not fit ends in an ellipsis.
+ */
+export function wrapText(text: string, maxChars: number, maxLines = 2): string[] {
+  // A unit stays with its number: "29 °C" never breaks between the two.
+  const words = text
+    .trim()
+    .replace(/ (°C|K)(?=$|[ ,.])/g, " $1")
+    .split(/[ \t\n]+/)
+    .filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i];
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= maxChars) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = word.length > maxChars ? `${word.slice(0, maxChars - 1)}…` : word;
+    if (lines.length === maxLines - 1) {
+      const rest = words.slice(i + 1).join(" ");
+      const last = rest ? `${line} ${rest}` : line;
+      lines.push(last.length > maxChars ? `${last.slice(0, maxChars - 1).trimEnd()}…` : last);
+      return lines;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
