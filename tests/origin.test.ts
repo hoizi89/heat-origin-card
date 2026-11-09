@@ -38,11 +38,18 @@ describe("shower litres", () => {
   const litres = (top: number, bottom: number) => Math.round(showerLitres({ top, bottom, heights: HOT_WATER_HEIGHTS, volume: 300 }) ?? -1);
 
   it("matches the Home Assistant sensor it was taken from", () => {
-    expect(litres(40.6, 38.4)).toBe(172);
-    expect(litres(39.2, 27.5)).toBe(63);
+    expect(litres(40.6, 38.4)).toBe(163);
+    expect(litres(39.2, 27.5)).toBe(40);
     expect(litres(47.8, 44.1)).toBe(366);
     expect(litres(58.3, 55.0)).toBe(477);
     expect(litres(37.0, 36.0)).toBe(0);
+  });
+
+  it("rises smoothly while a nearly uniform store warms through the mix line", () => {
+    // 09.11.2026: with a hard cut this step went 149 -> 246 litres
+    expect(litres(40.0, 38.4)).toBe(145);
+    expect(litres(40.4, 38.8)).toBe(178);
+    expect(litres(40.5, 39.3)).toBe(208);
   });
 
   it("gets hotter water to more litres, and needs a volume", () => {

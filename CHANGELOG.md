@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+
+- **Shower litres rise smoothly.** A slice now counts in part between a kelvin under the mix temperature and three over it, in full above. With a hard cut a nearly uniform store jumped from 149 to 246 litres when it warmed by 0.9 K across the line. Hot and cold stores give the same litres as before.
+
 ## 2.0.0
 
 ### New: the origin layout, now the default

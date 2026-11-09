@@ -75,8 +75,10 @@ export interface ShowerInput {
 
 /**
  * Litres of shower water at `mix` °C the store still holds: thirty slices along the
- * profile, every slice at least a kelvin over `mix` mixed down with cold water. The
- * bottom five per cent is the cold inlet and counts for nothing.
+ * profile, each mixed down with cold water. A slice counts in part between a kelvin
+ * under `mix` and three over it, in full above: a hard cut made a nearly uniform store
+ * jump by a hundred litres when it crossed the line, and lukewarm water is half useful
+ * at the tap anyway. The bottom five per cent is the cold inlet and counts for nothing.
  */
 export function showerLitres({ top, bottom, heights, volume, mix = 38, cold = 10 }: ShowerInput): number | undefined {
   if (top === undefined || !volume || volume <= 0 || mix <= cold) return undefined;
@@ -88,7 +90,8 @@ export function showerLitres({ top, bottom, heights, volume, mix = 38, cold = 10
     const h = (i + 0.5) / slices;
     if (h < EDGE_MIN) continue;
     const t = Math.min(Math.max(profileAt(h, top, low, heights), cold), hottest);
-    if (t >= mix + 1) litres += (volume / slices) * ((t - cold) / (mix - cold));
+    const weight = Math.min(1, Math.max(0, (t - (mix - 1)) / 4));
+    litres += weight * (volume / slices) * ((t - cold) / (mix - cold));
   }
   return litres;
 }
