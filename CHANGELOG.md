@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2
+
+- **Buffer: usable from what the circuits ask now.** The buffer counts its heat above the warmest flow target of the circuits that are on, not above a fixed or learned floor. "0.0 kWh" no longer shows while the floor heating, asking for 29 °C, still draws from a 34 °C buffer. The forecast keeps its learned floor.
+- **Cleaner tanks.** The edge sits under the readings, as a clear dark line with a light seam. Its label steps off a reading at the same height and never leaves the tank; an edge inside a round cap marks a sliver and is not drawn. The readings stay at their sensor height but inside the straight part of the capsule, apart from each other.
+- **No more "0 starts".** A heat pump that has run since before midnight says so; a day without any run shows no line.
+- **Legionella badge in calendar days.** New option `entities.legionella_last` (an input_datetime or timestamp): the days are counted by calendar, as a daily automation counts them. While a disinfection runs the badge says so and pulses (still with reduced motion).
+- **Hot water first.** While the heat pump charges hot water, a circuit below its flow target shows "hot water first" in grey instead of an orange deviation; the flow moves into the tooltip.
+
 ## 2.0.1
 
 - **Shower litres rise smoothly.** A slice now counts in part between a kelvin under the mix temperature and three over it, in full above. With a hard cut a nearly uniform store jumped from 149 to 246 litres when it warmed by 0.9 K across the line. Hot and cold stores give the same litres as before.

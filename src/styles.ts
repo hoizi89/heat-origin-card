@@ -157,8 +157,23 @@ export const cardStyles = css`
     font-size: 10px;
     font-weight: 700;
   }
+  .origin .o-edge {
+    fill: rgba(0, 0, 0, 0.85);
+  }
+  .origin .o-edge-lit {
+    fill: rgba(255, 255, 255, 0.35);
+  }
+  .origin .o-badge.running {
+    animation: o-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes o-pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .origin .o-line.flowing {
+    .origin .o-line.flowing,
+    .origin .o-badge.running {
       animation: none;
     }
   }

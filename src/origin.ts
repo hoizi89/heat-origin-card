@@ -152,3 +152,51 @@ export function ringArcs(heat: number, electric: number, shares: Partial<Record<
   if (airDeg > gap) arcs.push({ part: "air", start: start + elDeg + gap / 2, length: airDeg - gap });
   return arcs;
 }
+
+/** Height of a reading's pill in the tank. */
+export const PILL_H = 20;
+
+/**
+ * Where the pills go: at their sensor's height, clamped into the straight part of the
+ * capsule (a pill in the round cap is cut off by it), and pushed apart so they never
+ * overlap. Input and output in the same order.
+ */
+export function pillCentres(wanted: number[], span: { top: number; bottom: number; gap: number }): number[] {
+  const clamp = (v: number) => Math.min(span.bottom, Math.max(span.top, v));
+  const order = wanted.map((v, i) => ({ v: clamp(v), i })).sort((a, b) => a.v - b.v);
+  // Push down from the top, then back up from the bottom if the last one ran past it.
+  for (let k = 1; k < order.length; k += 1) order[k].v = Math.max(order[k].v, order[k - 1].v + span.gap);
+  for (let k = order.length - 1; k >= 0; k -= 1) {
+    const limit = k === order.length - 1 ? span.bottom : order[k + 1].v - span.gap;
+    order[k].v = Math.min(order[k].v, limit);
+  }
+  const out: number[] = new Array(wanted.length);
+  for (const o of order) out[o.i] = Math.max(span.top, o.v);
+  return out;
+}
+
+/**
+ * Where the threshold label beside the edge goes: at the edge, unless a pill sits at that
+ * height, then just above or below the pill (whichever is nearer and fits); never outside
+ * the tank's span. Undefined when there is no room at all.
+ */
+export function edgeLabelY(edge: number, pills: number[], span: { top: number; bottom: number; clear: number }): number | undefined {
+  const inSpan = (v: number) => v >= span.top && v <= span.bottom;
+  const free = (v: number) => pills.every((p) => Math.abs(v - p) >= span.clear);
+  const at = Math.min(span.bottom, Math.max(span.top, edge));
+  if (free(at)) return at;
+  const candidates = pills
+    .flatMap((p) => [p - span.clear, p + span.clear])
+    .filter((v) => inSpan(v) && free(v))
+    .sort((a, b) => Math.abs(a - edge) - Math.abs(b - edge));
+  return candidates[0];
+}
+
+/** Whole calendar days between the last time and now, as the hot water automation counts them. */
+export function calendarDays(last: number, now: number): number {
+  const day = (t: number) => {
+    const d = new Date(t);
+    return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+  return Math.round((day(now) - day(last)) / 86_400_000);
+}

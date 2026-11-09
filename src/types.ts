@@ -104,6 +104,8 @@ export interface HeatOriginEntities {
   hot_water_reason?: string;
   /** Days since the hot water was last held at 60 °C; with it a badge says when that was. */
   legionella_days?: string;
+  /** Optional: when the store last reached 60 °C (input_datetime or timestamp sensor); days are then counted in calendar days. */
+  legionella_last?: string;
 }
 
 export interface CircuitConfig {

@@ -97,6 +97,7 @@ flow:
 | `stores[].mix`, `cold` | 38, 10 | Origin layout, hot water: the shower temperature and the cold water it is mixed with. Every layer at least a kelvin over `mix` counts; the bottom five per cent is the cold inlet and counts for nothing. |
 | `entities.hot_water_reason` | | Origin layout: an entity whose state says why the hot water set-point is what it is, e.g. an `input_text` an automation writes ("Midday sun -> 50 °C"). The part before ` -> ` is shown under the target. |
 | `entities.legionella_days` | | Origin layout: days since the hot water was last held at 60 °C. A badge says when that was: green under 5 days, orange from 5, red from 10. |
+| `entities.legionella_last` | | Origin layout: when the hot water was last held at 60 °C (an `input_datetime` or timestamp). With it the badge counts calendar days. While a disinfection runs it says so. |
 | `flow.on_target` | `0.5` | Origin layout: kelvin a running circuit's flow may be off its `curve_flow` and still count as on target. |
 | `wide_from` | `560` | Card width in pixels from which the drawing spreads out — stores left, the heat pump between, circuits right, every box as wide as the columns' and the circle as large — instead of the two columns simply scaling up; the drawing stops growing at 760 px. `0` never. |
 | `flow.centre` | `heat` | What the circle reads while the heat pump runs: `power`, or `both` — then the performance factor moves into the foot. |

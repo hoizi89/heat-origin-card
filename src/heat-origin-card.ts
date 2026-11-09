@@ -5,7 +5,7 @@ import { icon as iconMark } from "./icons";
 import { coarseSpan, hoursLeft, parseTrend, slopePerHour, type TrendPoint } from "./trend";
 import { chargedAt, heatingRuns, learnBuffer, learnMarks, weatherFactor, type BufferLearning, type LearnedMarks, type Sample } from "./learn";
 import { localize } from "./localize";
-import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, edgeAt, ringArcs, showerLitres, tempTone, usableKwh, type Heights } from "./origin";
+import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, PILL_H, calendarDays, edgeAt, edgeLabelY, pillCentres, ringArcs, showerLitres, tempTone, usableKwh, type Heights } from "./origin";
 import { circuitActive, classify, isRunning, shortWordLabel, wordLabel } from "./modes";
 import { cardStyles } from "./styles";
 import {
@@ -514,6 +514,23 @@ export class HeatOriginCard extends LitElement {
       if (need !== undefined && (warmest === undefined || need > warmest)) warmest = need;
     }
     return warmest ?? 30;
+  }
+
+  /**
+   * Where a buffer's heat stops being useful right now: the warmest flow target among the
+   * circuits that are on. A fixed or learned floor said "0 kWh" while the floor heating,
+   * asking for 29 °C, was still drawing happily from a 34 °C buffer. Nothing running:
+   * the usual floor.
+   */
+  private _bufferUseFloor(store: StoreConfig & { kind: StoreKind }): number {
+    const config = this._config as ResolvedConfig;
+    let warmest: number | undefined;
+    for (const circuit of config.circuits) {
+      if (circuit.kind !== "heating" || !this._circuitActive(circuit)) continue;
+      const want = this._num(circuit.curve_flow);
+      if (want !== undefined && want > 5 && (warmest === undefined || want > warmest)) warmest = want;
+    }
+    return warmest ?? this._floor(store);
   }
 
   private _ceiling(store: StoreConfig & { kind: StoreKind }, floor: number, top: number | undefined): number {
@@ -1444,29 +1461,38 @@ export class HeatOriginCard extends LitElement {
     const cut = y + h * (1 - edge);
     const clip = `ho-tank-${store.kind}-${x}`;
     const target = store.marks?.target;
-    const pills = ([
+    const readings = ([
       [heights.top, top],
       [heights.bottom, bottom]
-    ] as Array<[number, number | undefined]>)
-      .filter(([, v]) => v !== undefined)
-      .map(([f, v]) => {
-        const yy = y + h * (1 - f);
-        return svg`<rect x=${x + 4} y=${yy - 10} width=${w - 8} height="20" rx="6" class="o-pill"/>
-          <text x=${x + w / 2} y=${yy + 4.5} text-anchor="middle" class="o-pill-text">${this._one(v as number)}°</text>`;
-      });
+    ] as Array<[number, number | undefined]>).filter(([, v]) => v !== undefined) as Array<[number, number]>;
+    // Pills sit at their sensor's height, but inside the straight part of the capsule and apart.
+    const centres = pillCentres(
+      readings.map(([f]) => y + h * (1 - f)),
+      { top: y + w / 2 - 2, bottom: y + h - w / 2 + 2, gap: PILL_H + 4 }
+    );
+    const pills = readings.map(
+      ([, v], i) => svg`<rect x=${x + 4} y=${centres[i] - PILL_H / 2} width=${w - 8} height=${PILL_H} rx="6" class="o-pill"/>
+        <text x=${x + w / 2} y=${centres[i] + 4.5} text-anchor="middle" class="o-pill-text">${this._one(v)}°</text>`
+    );
+    // An edge inside a round cap marks a sliver, not a layer: no line, no label there.
+    const hasEdge = edge > EDGE_MIN && edge < 1 && cut >= y + w * 0.5 && cut <= y + h - w * 0.5;
+    // The label beside the edge moves off a pill's height and never leaves the capsule's span.
+    const label = hasEdge ? edgeLabelY(cut, centres, { top: y + 8, bottom: y + h - 2, clear: PILL_H / 2 + 5 }) : undefined;
     return svg`<g class="o-tank ${active ? "active" : ""}" style="--glow:${tone}" @click=${() => this._history([store.top, store.bottom, typeof target === "string" ? target : undefined])}>
       <title>${store.name}</title>
       <defs><clipPath id=${clip}><rect x=${x} y=${y} width=${w} height=${h} rx=${w / 2}/></clipPath></defs>
       <g clip-path="url(#${clip})">
         <rect x=${x} y=${y} width=${w} height=${Math.max(0, cut - y)} fill=${tempTone(top)}/>
         <rect x=${x} y=${cut} width=${w} height=${Math.max(0, y + h - cut)} fill=${tempTone(bottom ?? top)}/>
-        ${edge > EDGE_MIN && edge < 1 ? svg`<rect x=${x} y=${cut - 1} width=${w} height="2" fill="#111"/>` : nothing}
+        ${hasEdge
+          ? svg`<rect x=${x} y=${cut - 1.5} width=${w} height="3" class="o-edge"/><rect x=${x} y=${cut + 1.5} width=${w} height="1" class="o-edge-lit"/>`
+          : nothing}
       </g>
       <rect x=${x - 3} y=${y - 3} width=${w + 6} height=${h + 6} rx=${w / 2 + 3} fill="none" stroke=${tone} stroke-width=${active ? 2 : 1.5} class="o-rim"/>
-      ${edge > EDGE_MIN && edge < 1
-        ? svg`<text x=${x + w + 5} y=${cut + 3} class="o-tick">${formatNumber(threshold, this._locale, 0)}°</text>`
-        : nothing}
       ${pills}
+      ${label !== undefined
+        ? svg`<text x=${x + w + 7} y=${label + 3} class="o-tick">${Number.isInteger(threshold) ? formatNumber(threshold, this._locale, 0) : this._one(threshold)}°</text>`
+        : nothing}
     </g>`;
   }
 
@@ -1595,12 +1621,29 @@ export class HeatOriginCard extends LitElement {
       const reasonRaw = stateOf(this.hass, config.entities.hot_water_reason)?.state;
       const reason = reasonRaw && !["unknown", "unavailable", ""].includes(reasonRaw) ? reasonRaw.split(" -> ")[0].trim() : undefined;
       if (reason) out.push(svg`<text x=${x} y=${tankY + 89} text-anchor="end" class="o-small o-reason"><title>${reasonRaw}</title>${reason.length > 26 ? `${reason.slice(0, 25)}…` : reason}</text>`);
-      const days = this._num(config.entities.legionella_days);
-      if (days !== undefined) {
-        const words = days < 1 ? this._t("origin.legio_today") : days < 2 ? this._t("origin.legio_one") : this._t("origin.legio", { n: String(Math.floor(days)) });
-        const tone = days >= 10 ? "var(--ho-legio-late)" : days >= 5 ? "var(--ho-warn)" : "var(--ho-legio-ok)";
+      // Days since 60 °C in calendar days, as the automation counts them, when a time stamp is given;
+      // a running disinfection says so instead.
+      const lastEntity = stateOf(this.hass, config.entities.legionella_last);
+      const stampAttr = Number(lastEntity?.attributes.timestamp);
+      const lastAt = !lastEntity ? NaN : Number.isFinite(stampAttr) && stampAttr > 0 ? stampAttr * 1000 : Date.parse(lastEntity.state.replace(" ", "T"));
+      const fraction = this._num(config.entities.legionella_days);
+      const days = Number.isFinite(lastAt) ? calendarDays(lastAt, Date.now()) : fraction === undefined ? undefined : Math.floor(fraction);
+      const legioRunning =
+        active &&
+        ((mode.raw ?? "").toUpperCase().includes("LEGIO") ||
+          (reason ?? "").toLowerCase().includes("legionell") ||
+          (target !== undefined && target >= 58.5));
+      if (days !== undefined || legioRunning) {
+        const words = legioRunning
+          ? this._t("origin.legio_running")
+          : days! < 1
+            ? this._t("origin.legio_today")
+            : days! < 2
+              ? this._t("origin.legio_one")
+              : this._t("origin.legio", { n: String(days) });
+        const tone = legioRunning ? "var(--ho-hot-water)" : days! >= 10 ? "var(--ho-legio-late)" : days! >= 5 ? "var(--ho-warn)" : "var(--ho-legio-ok)";
         const width = words.length * 5.6 + 16;
-        out.push(svg`<g class="o-badge" @click=${() => this._moreInfo(config.entities.legionella_days)}>
+        out.push(svg`<g class="o-badge ${legioRunning ? "running" : ""}" @click=${() => this._history([config.entities.legionella_last, config.entities.legionella_days])}>
           <rect x=${x - width} y=${tankY + 98} width=${width} height="15" rx="7.5" fill="none" stroke=${tone}/>
           <text x=${x - width / 2} y=${tankY + 109} text-anchor="middle" class="o-badge-text" style="fill:${tone}">${words}</text>
         </g>`);
@@ -1612,13 +1655,15 @@ export class HeatOriginCard extends LitElement {
       const draining = carried?.store === buf;
       out.push(svg`<path d="M${cx} 170 L${cx} 180 L266 180 L266 190" class="o-line ${charging ? "flowing" : "idle"}" style="stroke:var(--ho-heating)"/>`);
       const floor = this._floor(buf);
-      out.push(this._originTank(240, tankY, 52, tankH, buf, "var(--ho-heating)", charging, floor));
-      const x = 318;
+      // Usable is what the circuits running now can still take; the forecast keeps the learned floor.
+      const useFloor = this._bufferUseFloor(buf);
+      out.push(this._originTank(240, tankY, 52, tankH, buf, "var(--ho-heating)", charging, useFloor));
+      const x = 326;
       const state = charging ? this._t("origin.charging") : draining ? this._t("origin.giving") : "";
       out.push(t(x, tankY + 8, `${buf.name.toUpperCase()}${state ? ` · ${state.toUpperCase()}` : ""}`, "o-cap", "start", "var(--ho-heating)"));
-      const usable = usableKwh(this._num(buf.top), buf.bottom ? this._num(buf.bottom) : undefined, this._heights(buf), buf.volume, floor);
+      const usable = usableKwh(this._num(buf.top), buf.bottom ? this._num(buf.bottom) : undefined, this._heights(buf), buf.volume, useFloor);
       if (usable !== undefined) out.push(svg`<text x=${x} y=${tankY + 38} class="o-big">${this._one(usable)}<tspan class="o-unit"> kWh</tspan></text>`);
-      out.push(t(x, tankY + 56, this._t("origin.usable_to", { t: formatNumber(floor, locale, 0) }), "o-small o-muted"));
+      out.push(t(x, tankY + 56, this._t("origin.usable_to", { t: this._one(useFloor) }), "o-small o-muted"));
       let note: string | undefined;
       const top = this._num(buf.top);
       if (charging && this._pvMode() && top !== undefined) {
@@ -1652,7 +1697,9 @@ export class HeatOriginCard extends LitElement {
         (today.minutes.hot_water ?? 0) >= 1 ? this._t("origin.day_water", { t: this._hmText(today.minutes.hot_water ?? 0) }) : ""
       ].filter(Boolean);
       if (second.length) dayLines.push(second.join(" · "));
-      dayLines.push(today.starts === 1 ? this._t("origin.day_start") : this._t("origin.day_starts", { n: String(today.starts) }));
+      // No start since midnight means it ran through the night, or never ran: say which, never "0 starts".
+      if (today.starts > 0) dayLines.push(today.starts === 1 ? this._t("origin.day_start") : this._t("origin.day_starts", { n: String(today.starts) }));
+      else if (running) dayLines.push(this._t("origin.day_through"));
     }
     if (dayLines.length) {
       out.push(t(16, dayY, this._t("origin.today").toUpperCase(), "o-cap"));
@@ -1671,11 +1718,15 @@ export class HeatOriginCard extends LitElement {
       const flow = this._num(c.flow);
       const curve = this._num(c.curve_flow);
       let status: TemplateResult;
+      let showFlow = on;
       if (on) {
         const dev = flow !== undefined && curve !== undefined && curve > 5 ? flow - curve : undefined;
         const ok = dev === undefined || Math.abs(dev) <= config.flow.on_target;
-        const tone = ok ? "var(--ho-legio-ok)" : "var(--ho-warn)";
-        const words = ok ? this._t("origin.on_target") : `${dev! > 0 ? "+" : "−"}${this._one(Math.abs(dev!))} K`;
+        // Short while the heat pump serves the hot water: the circuit lives off the buffer, that is no fault.
+        const priority = !ok && dev! < 0 && mode.kind === "hot_water";
+        const tone = ok ? "var(--ho-legio-ok)" : priority ? "var(--ho-muted)" : "var(--ho-warn)";
+        const words = ok ? this._t("origin.on_target") : priority ? this._t("origin.dhw_priority") : `${dev! > 0 ? "+" : "−"}${this._one(Math.abs(dev!))} K`;
+        if (priority) showFlow = false;
         status = svg`<text x=${x + w - 22} y=${y + 19} text-anchor="end" class="o-small" style="fill:${tone}">${words}</text>
           <circle cx=${x + w - 12} cy=${y + 15} r="4" fill=${tone}/>`;
       } else {
@@ -1689,11 +1740,11 @@ export class HeatOriginCard extends LitElement {
         status = t(x + w - 10, y + 19, words, "o-small o-muted", "end");
       }
       out.push(svg`<g class="o-circuit ${on ? "on" : "off"}" @click=${() => this._history([c.room, c.flow, c.curve_flow])}>
-        <title>${c.name}</title>
+        <title>${c.name}${flow !== undefined ? ` · VL ${this._one(flow)}°` : ""}${curve !== undefined && curve > 5 ? ` / ${this._one(curve)}°` : ""}</title>
         <rect x=${x} y=${y} width=${w} height="30" rx="8" class="o-row"/>
         <text x=${x + 10} y=${y + 19} class="o-cap" style="fill:${on ? "var(--ho-heating)" : "var(--ho-muted)"}">${c.short || c.name.slice(0, 3).toUpperCase()}</text>
         ${room !== undefined ? svg`<text x=${x + 38} y=${y + 21} class="o-room">${this._one(room)}°</text>` : nothing}
-        ${on && flow !== undefined ? svg`<text x=${x + 98} y=${y + 19} class="o-small o-flow">VL ${this._one(flow)}°</text>` : nothing}
+        ${showFlow && flow !== undefined ? svg`<text x=${x + 98} y=${y + 19} class="o-small o-flow">VL ${this._one(flow)}°</text>` : nothing}
         ${status}
       </g>`);
     });

@@ -315,6 +315,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
       schema: [
         { name: "mode", required: true, selector: sensor },
         { name: "hot_water_reason", selector: { entity: {} } },
+        { name: "legionella_last", selector: { entity: {} } },
         grid(
           [
             "heat_power", "electric_power", "flow", "return", "volume_flow", "outdoor", "solar", "house_power", "grid_power", "battery_power", "cop", "pv_mode",
@@ -363,7 +364,7 @@ export function getConfigForm(locale: string, config?: HeatOriginCardConfig) {
     "hot_water_electric_today", "heat_today", "electric_today", "centre", "ring", "labels", "circuit", "curve", "gauge",
     "scale", "trend", "rest_colour", "buffer_line", "foot_items", "chips", "balance", "running", "rest_note", "store_head",
     "name", "kind", "top", "bottom", "volume", "usable_min", "usable_max", "circulation", "circulation_pump", "due_at",
-    "short", "state", "pump", "room", "target_room", "curve_flow", "icon", "hot_water_reason", "legionella_days", "top_height", "bottom_height"
+    "short", "state", "pump", "room", "target_room", "curve_flow", "icon", "hot_water_reason", "legionella_days", "legionella_last", "top_height", "bottom_height"
   ];
   const labels: Record<string, string> = Object.fromEntries(labelled.map((name) => [name, t(`editor.${name}`)]));
   const helped = ["show_title", "pv_mode", "mode", "source", "wide_from", "volume", "usable_min", "usable_max", "eco", "circuit", "running", "curve", "gauge", "scale", "trend", "ring", "centre", "buffer_line", "store_head", "balance", "chips", "foot_items", "rest_note"];

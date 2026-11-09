@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from "vitest";
 import { CARD_TYPE } from "../src/config";
-import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, edgeAt, ringArcs, showerLitres, tempTone, usableKwh } from "../src/origin";
+import { BUFFER_HEIGHTS, EDGE_MIN, HOT_WATER_HEIGHTS, calendarDays, edgeAt, edgeLabelY, pillCentres, ringArcs, showerLitres, tempTone, usableKwh } from "../src/origin";
 import type { HeatOriginCardConfig, HomeAssistant } from "../src/types";
 import { FULL_CONFIG, IDS, makeHass } from "./fixtures";
 
@@ -141,8 +141,70 @@ describe("the origin layout", () => {
     expect(text).toContain("60° vor 6 Tagen");
   });
 
+  it("counts the days since 60 °C in calendar days from a time stamp, and says when a run is on", async () => {
+    const last = new Date(Date.now() - 3 * 86_400_000);
+    last.setHours(23, 30, 0, 0);
+    const stamp = `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")} 23:30:00`;
+    const base = {
+      "input_datetime.ww_60": { entity_id: "input_datetime.ww_60", state: stamp, attributes: { timestamp: last.getTime() / 1000 } },
+      "sensor.ww_tage": { entity_id: "sensor.ww_tage", state: "2.4", attributes: {} }
+    };
+    const config = { ...origin, entities: { ...IDS, hot_water_reason: "input_text.ww_stufe", legionella_days: "sensor.ww_tage", legionella_last: "input_datetime.ww_60" } };
+    const idle = makeHass({ ...base, [IDS.mode]: { entity_id: IDS.mode, state: "CH", attributes: {} }, "input_text.ww_stufe": { entity_id: "input_text.ww_stufe", state: "Grundstellung -> 42.0 Grad", attributes: {} } });
+    let text = (await mount(config, idle)).querySelector(".origin svg")!.textContent!.replace(/\s+/g, " ");
+    expect(text.slice(text.indexOf("WARMWASSER"), text.indexOf("WARMWASSER") + 160)).toContain(`60° vor ${calendarDays(last.getTime(), Date.now())} Tagen`);
+    const running = makeHass({ ...base, "input_text.ww_stufe": { entity_id: "input_text.ww_stufe", state: "Legionellen erzwungen -> 59.0 Grad", attributes: {} } });
+    text = (await mount(config, running)).querySelector(".origin svg")!.textContent!.replace(/\s+/g, " ");
+    expect(text).toContain("60° läuft");
+  });
+
+  it("says hot water comes first instead of a deviation while the heat pump charges hot water", async () => {
+    const hass = makeHass({
+      "sensor.lambdawp_hc1_operating_state": { entity_id: "sensor.lambdawp_hc1_operating_state", state: "HEATING", attributes: {} }
+    });
+    const text = (await mount(origin, hass)).querySelector(".origin svg")!.textContent!.replace(/\s+/g, " ");
+    expect(text).toContain("WW-Vorrang");
+    expect(text).not.toMatch(/−4,8 K/);
+  });
+
   it("keeps the classic columns on request", async () => {
     const root = await mount({ ...FULL_CONFIG, layout: "classic" });
     expect(root.querySelector(".origin")).toBeNull();
+  });
+});
+
+describe("pill placement", () => {
+  const span = { top: 220, bottom: 284, gap: 24 };
+  it("keeps pills out of the round caps", () => {
+    // buffer sensors at 85 % and 20 % of a 112 px tank starting at 196
+    const [top, bottom] = pillCentres([196 + 112 * 0.15, 196 + 112 * 0.8], span);
+    expect(top).toBe(220);
+    expect(bottom).toBeCloseTo(285.6 > 284 ? 284 : 285.6);
+  });
+  it("pushes close pills apart and stays inside", () => {
+    const [a, b] = pillCentres([250, 255], span);
+    expect(b - a).toBeGreaterThanOrEqual(24);
+    expect(a).toBeGreaterThanOrEqual(220);
+    expect(b).toBeLessThanOrEqual(284);
+  });
+});
+
+describe("edge label", () => {
+  const span = { top: 204, bottom: 306, clear: 15 };
+  it("stays at the edge when no pill is near", () => {
+    expect(edgeLabelY(260, [220, 284], span)).toBe(260);
+  });
+  it("moves off a pill at the same height", () => {
+    const y = edgeLabelY(222, [220, 284], span)!;
+    expect(Math.abs(y - 220)).toBeGreaterThanOrEqual(15);
+    expect(y).toBeGreaterThanOrEqual(204);
+  });
+});
+
+describe("calendar days", () => {
+  it("counts days the way the automation does, not elapsed hours", () => {
+    const last = new Date(2026, 9, 30, 15, 55).getTime();
+    expect(calendarDays(last, new Date(2026, 10, 9, 10, 58).getTime())).toBe(10);
+    expect(calendarDays(last, new Date(2026, 9, 30, 23, 0).getTime())).toBe(0);
   });
 });
